@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Binary Whisper Decoder</title>
+<style>
+  body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: white;
+    background-image: 
+      linear-gradient(to right, #050505 1px, transparent 1px),
+      linear-gradient(to bottom, #050505 1px, transparent 1px);
+    background-size: 40px 40px; /* grid size */
+    font-family: monospace;
+  }
+
+  #dropzone {
+    background: #050505;
+    color: white;
+    padding: 1.2em 3em;
+    border-radius: 2em;
+    font-size: 1.2em;
+    cursor: pointer;
+    transition: background 0.3s;
+  }
+  #dropzone:hover {
+    background: #222;
+  }
+
+  #canvas { display: none; }
+
+  /* Modal popup */
+  #modal {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    justify-content: center;
+    align-items: center;
+  }
+  #modalContent {
+    background: #fff;
+    color: #050505;
+    padding: 2em;
+    border-radius: 1em;
+    max-width: 600px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    text-align: center;
+  }
+  #closeBtn {
+    margin-top: 1em;
+    padding: 0.5em 1.5em;
+    border: none;
+    border-radius: 0.5em;
+    background: #050505;
+    color: white;
+    font-family: monospace;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<div id="dropzone">drop your whisper here</div>
+<canvas id="canvas"></canvas>
+
+<!-- Modal -->
+<div id="modal">
+  <div id="modalContent">
+    <div id="decodedText"></div>
+    <button id="closeBtn">close</button>
+  </div>
+</div>
+
+<script>
+const dropzone = document.getElementById("dropzone");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const modal = document.getElementById("modal");
+const decodedTextDiv = document.getElementById("decodedText");
+const closeBtn = document.getElementById("closeBtn");
+
+const THRESHOLD = 140; // adjust depending on your output
+
+// Open file dialog on click
+dropzone.addEventListener("click", () => {
+  let input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.onchange = e => handleFile(e.target.files[0]);
+  input.click();
+});
+
+// Drag & drop
+dropzone.addEventListener("dragover", e => {
+  e.preventDefault();
+  dropzone.style.background = "#333";
+});
+dropzone.addEventListener("dragleave", e => {
+  dropzone.style.background = "#050505";
+});
+dropzone.addEventListener("drop", e => {
+  e.preventDefault();
+  dropzone.style.background = "#050505";
+  handleFile(e.dataTransfer.files[0]);
+});
+
+function handleFile(file) {
+  if (!file) return;
+  const img = new Image();
+  img.onload = () => decodeImage(img);
+  img.src = URL.createObjectURL(file);
+}
+
+function decodeImage(img) {
+  canvas.width = img.width;
+  canvas.height = img.height;
+  ctx.drawImage(img, 0, 0);
+
+  // Detect grid cell size
+  const sampleRow = Math.floor(img.height / 2);
+  let lastEmpty = false, cellW = 0, cells = [];
+  for (let x=0; x<img.width; x++) {
+    const pixel = ctx.getImageData(x, sampleRow, 1, 1).data;
+    const brightness = (pixel[0]+pixel[1]+pixel[2]) / 3;
+    const empty = brightness > 240;
+    if (empty !== lastEmpty) {
+      cells.push(x);
+      lastEmpty = empty;
+    }
+  }
+  if (cells.length < 2) {
+    decodedTextDiv.textContent = "Grid not detected.";
+    modal.style.display = "flex";
+    return;
+  }
+  cellW = cells[1] - cells[0];
+  const cols = Math.round(img.width / cellW);
+  const rows = Math.round(img.height / cellW);
+
+  let bin = "";
+  for (let r=0; r<rows; r++) {
+    for (let c=0; c<cols; c++) {
+      const x = Math.floor(c * cellW + cellW/2);
+      const y = Math.floor(r * cellW + cellW/2);
+      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      const brightness = (pixel[0]+pixel[1]+pixel[2]) / 3;
+      bin += (brightness < THRESHOLD) ? "1" : "0";
+    }
+  }
+
+  let text = "";
+  for (let i=0; i<bin.length; i+=8) {
+    let byte = bin.substr(i, 8);
+    if (byte.length === 8) {
+      text += String.fromCharCode(parseInt(byte, 2));
+    }
+  }
+
+  decodedTextDiv.textContent = text || "[Could not decode]";
+  modal.style.display = "flex";
+}
+
+closeBtn.addEventListener("click", () => {
+  modal.style.display = "none";
+});
+</script>
+
+</body>
+</html>
