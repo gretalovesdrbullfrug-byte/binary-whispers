@@ -91,6 +91,10 @@ cv['onRuntimeInitialized'] = () => {
   console.log("OpenCV.js loaded and ready.");
 };
 
+// 🚫 Prevent default browser behavior (image replacing page)
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => e.preventDefault());
+
 // --- Upload handlers ---
 dropzone.addEventListener("click", () => {
   let input = document.createElement("input");
@@ -99,8 +103,14 @@ dropzone.addEventListener("click", () => {
   input.onchange = e => handleFile(e.target.files[0]);
   input.click();
 });
-dropzone.addEventListener("dragover", e => { e.preventDefault(); dropzone.style.background = "#333"; });
-dropzone.addEventListener("dragleave", e => { dropzone.style.background = "#050505"; });
+
+dropzone.addEventListener("dragover", e => { 
+  e.preventDefault(); 
+  dropzone.style.background = "#333"; 
+});
+dropzone.addEventListener("dragleave", e => { 
+  dropzone.style.background = "#050505"; 
+});
 dropzone.addEventListener("drop", e => {
   e.preventDefault();
   dropzone.style.background = "#050505";
@@ -142,7 +152,6 @@ function decodeWithOpenCV() {
     return;
   }
 
-  // Build array of circles
   let circleData = [];
   for (let i = 0; i < circles.cols; ++i) {
     let x = circles.data32F[i * 3];
@@ -156,7 +165,6 @@ function decodeWithOpenCV() {
     mask.delete();
   }
 
-  // Sort by rows (y), then by columns (x)
   circleData.sort((a, b) => {
     if (Math.abs(a.y - b.y) > 15) return a.y - b.y;
     return a.x - b.x;
