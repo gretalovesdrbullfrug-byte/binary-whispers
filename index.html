@@ -78,25 +78,35 @@
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 
 <script>
-  // 🚫 Prevent browser from opening dropped files anywhere
+// 🚫 Prevent browser from hijacking drops outside dropzone
 ["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
   document.addEventListener(eventName, e => {
     e.preventDefault();
-    e.stopPropagation();
   }, false);
 });
-const dropzone = document.getElementById("dropzone");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const modal = document.getElementById("modal");
-const decodedTextDiv = document.getElementById("decodedText");
-const closeBtn = document.getElementById("closeBtn");
 
-let cvReady = false;
-cv['onRuntimeInitialized'] = () => {
-  cvReady = true;
-  console.log("OpenCV.js loaded and ready.");
-};
+const dropzone = document.getElementById("dropzone");
+
+// --- Dropzone events ---
+dropzone.addEventListener("dragover", e => {
+  e.preventDefault();
+  e.stopPropagation();
+  dropzone.style.background = "#333";
+});
+
+dropzone.addEventListener("dragleave", e => {
+  e.preventDefault();
+  e.stopPropagation();
+  dropzone.style.background = "#050505";
+});
+
+dropzone.addEventListener("drop", e => {
+  e.preventDefault();
+  e.stopPropagation();
+  dropzone.style.background = "#050505";
+  handleFile(e.dataTransfer.files[0]);
+});
+
 
 // 🚫 Prevent default browser behavior (image replacing page)
 window.addEventListener("dragover", e => e.preventDefault());
