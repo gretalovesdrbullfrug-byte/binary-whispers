@@ -78,41 +78,29 @@
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 
 <script>
-// 🚫 Prevent browser from hijacking drops outside dropzone
-["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
-  document.addEventListener(eventName, e => {
-    e.preventDefault();
-  }, false);
-});
+let cvReady = false;
+
+// Initialize OpenCV ready flag
+if (typeof cv !== "undefined") {
+  cv['onRuntimeInitialized'] = () => {
+    cvReady = true;
+    console.log("✅ OpenCV.js loaded and ready.");
+  };
+}
 
 const dropzone = document.getElementById("dropzone");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const modal = document.getElementById("modal");
+const decodedTextDiv = document.getElementById("decodedText");
+const closeBtn = document.getElementById("closeBtn");
+
+// Prevent browser hijacking drops outside the dropzone
+["dragenter","dragover","dragleave","drop"].forEach(eventName => {
+  document.addEventListener(eventName, e => e.preventDefault(), false);
+});
 
 // --- Dropzone events ---
-dropzone.addEventListener("dragover", e => {
-  e.preventDefault();
-  e.stopPropagation();
-  dropzone.style.background = "#333";
-});
-
-dropzone.addEventListener("dragleave", e => {
-  e.preventDefault();
-  e.stopPropagation();
-  dropzone.style.background = "#050505";
-});
-
-dropzone.addEventListener("drop", e => {
-  e.preventDefault();
-  e.stopPropagation();
-  dropzone.style.background = "#050505";
-  handleFile(e.dataTransfer.files[0]);
-});
-
-
-// 🚫 Prevent default browser behavior (image replacing page)
-window.addEventListener("dragover", e => e.preventDefault());
-window.addEventListener("drop", e => e.preventDefault());
-
-// --- Upload handlers ---
 dropzone.addEventListener("click", () => {
   let input = document.createElement("input");
   input.type = "file";
@@ -120,16 +108,16 @@ dropzone.addEventListener("click", () => {
   input.onchange = e => handleFile(e.target.files[0]);
   input.click();
 });
-
-dropzone.addEventListener("dragover", e => { 
-  e.preventDefault(); 
-  dropzone.style.background = "#333"; 
+dropzone.addEventListener("dragover", e => {
+  e.preventDefault(); e.stopPropagation();
+  dropzone.style.background = "#333";
 });
-dropzone.addEventListener("dragleave", e => { 
-  dropzone.style.background = "#050505"; 
+dropzone.addEventListener("dragleave", e => {
+  e.preventDefault(); e.stopPropagation();
+  dropzone.style.background = "#050505";
 });
 dropzone.addEventListener("drop", e => {
-  e.preventDefault();
+  e.preventDefault(); e.stopPropagation();
   dropzone.style.background = "#050505";
   handleFile(e.dataTransfer.files[0]);
 });
@@ -137,7 +125,7 @@ dropzone.addEventListener("drop", e => {
 function handleFile(file) {
   if (!file) return;
   if (!cvReady) {
-    alert("OpenCV.js is still loading... try again in a few seconds.");
+    alert("⚠️ OpenCV.js is still loading... try again in a few seconds.");
     return;
   }
   const img = new Image();
@@ -169,6 +157,7 @@ function decodeWithOpenCV() {
     return;
   }
 
+  // Collect circle data
   let circleData = [];
   for (let i = 0; i < circles.cols; ++i) {
     let x = circles.data32F[i * 3];
@@ -182,13 +171,13 @@ function decodeWithOpenCV() {
     mask.delete();
   }
 
+  // Sort by row (y), then by col (x)
   circleData.sort((a, b) => {
     if (Math.abs(a.y - b.y) > 15) return a.y - b.y;
     return a.x - b.x;
   });
 
   let bin = circleData.map(c => c.bit).join("");
-
   let text = "";
   for (let i=0; i<bin.length; i+=8) {
     let byte = bin.substr(i, 8);
@@ -201,7 +190,9 @@ function decodeWithOpenCV() {
   src.delete(); gray.delete(); circles.delete();
 }
 
-closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
+closeBtn.addEventListener("click", () => {
+  modal.style.display = "none";
+});
 </script>
 
 </body>
