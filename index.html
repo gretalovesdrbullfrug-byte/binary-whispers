@@ -25,23 +25,21 @@
     font-size: 1.2em;
     cursor: pointer;
     transition: background 0.3s;
-    display: none; /* hidden until Decoder is ready */
   }
   #dropzone:hover { background: #222; }
   #canvas { display: none; }
 
-  /* Generic modal */
-  .modal {
+  /* Modal popup */
+  #modal {
     position: fixed;
     top: 0; left: 0;
     width: 100%; height: 100%;
     background: rgba(0,0,0,0.7);
-    display: flex;
+    display: none;
     justify-content: center;
     align-items: center;
-    z-index: 9999;
   }
-  .modalContent {
+  #modalContent {
     background: #fff;
     color: #050505;
     padding: 2em;
@@ -68,55 +66,25 @@
 <div id="dropzone">drop your whisper here</div>
 <canvas id="canvas"></canvas>
 
-<!-- Modal: Decoding result -->
-<div id="resultModal" class="modal" style="display:none;">
-  <div class="modalContent">
+<!-- Modal -->
+<div id="modal">
+  <div id="modalContent">
     <div id="decodedText"></div>
     <button id="closeBtn">close</button>
   </div>
 </div>
 
-<!-- Modal: Loading / status -->
-<div id="loadingModal" class="modal">
-  <div class="modalContent" id="loadingMessage">Decoder is loading...</div>
-</div>
-
-<!-- Replace OpenCV with Decoder.js (but same API) -->
-<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 <script>
-let decoderReady = false;
-
-// Renaming cv → Decoder for your project
-let Decoder = null;
-
-window.addEventListener("DOMContentLoaded", () => {
-  // Map cv to Decoder once ready
-  if (typeof cv !== "undefined") {
-    cv['onRuntimeInitialized'] = () => {
-      Decoder = cv;
-      decoderReady = true;
-      document.getElementById("loadingMessage").textContent = "Now you can drop your whisper.";
-      setTimeout(() => {
-        document.getElementById("loadingModal").style.display = "none";
-        document.getElementById("dropzone").style.display = "block";
-      }, 1500);
-    };
-  }
-});
-
 const dropzone = document.getElementById("dropzone");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const resultModal = document.getElementById("resultModal");
+const modal = document.getElementById("modal");
 const decodedTextDiv = document.getElementById("decodedText");
 const closeBtn = document.getElementById("closeBtn");
 
-// Prevent browser hijacking drops
-["dragenter","dragover","dragleave","drop"].forEach(eventName => {
-  document.addEventListener(eventName, e => e.preventDefault(), false);
-});
+const THRESHOLD = 180; // adjust if needed
 
-// --- Dropzone events ---
+// --- Upload handlers ---
 dropzone.addEventListener("click", () => {
   let input = document.createElement("input");
   input.type = "file";
@@ -124,90 +92,62 @@ dropzone.addEventListener("click", () => {
   input.onchange = e => handleFile(e.target.files[0]);
   input.click();
 });
-dropzone.addEventListener("dragover", e => {
-  e.preventDefault(); e.stopPropagation();
-  dropzone.style.background = "#333";
+dropzone.addEventListener("dragover", e => { 
+  e.preventDefault(); 
+  dropzone.style.background = "#333"; 
 });
-dropzone.addEventListener("dragleave", e => {
-  e.preventDefault(); e.stopPropagation();
-  dropzone.style.background = "#050505";
+dropzone.addEventListener("dragleave", e => { 
+  dropzone.style.background = "#050505"; 
 });
 dropzone.addEventListener("drop", e => {
-  e.preventDefault(); e.stopPropagation();
+  e.preventDefault();
   dropzone.style.background = "#050505";
   handleFile(e.dataTransfer.files[0]);
 });
 
 function handleFile(file) {
   if (!file) return;
-  if (!decoderReady) {
-    alert("Decoder is still loading… try again in a few seconds.");
-    return;
-  }
   const img = new Image();
-  img.onload = () => {
-    canvas.width = img.width;
-    canvas.height = img.height;
-    ctx.drawImage(img, 0, 0);
-    decodeWithDecoder();
-  };
+  img.onload = () => decodeImage(img);
   img.src = URL.createObjectURL(file);
 }
 
-function decodeWithDecoder() {
-  let src = Decoder.imread(canvas);
-  let gray = new Decoder.Mat();
-  Decoder.cvtColor(src, gray, Decoder.COLOR_RGBA2GRAY, 0);
-  Decoder.medianBlur(gray, gray, 5);
+function decodeImage(img) {
+  canvas.width = img.width;
+  canvas.height = img.height;
+  ctx.drawImage(img, 0, 0);
 
-  let circles = new Decoder.Mat();
-  Decoder.HoughCircles(gray, circles, Decoder.HOUGH_GRADIENT, 1,
-    20, // min distance
-    100, 30, 10, 60 // param1, param2, minR, maxR
-  );
+  // Estimate grid cell size
+  const cellW = Math.floor(img.width / 20); // assume max 20 cols (adjust if needed)
+  const cols = Math.round(img.width / cellW);
+  const rows = Math.round(img.height / cellW);
 
-  if (circles.cols === 0) {
-    decodedTextDiv.textContent = "[No circles detected]";
-    resultModal.style.display = "flex";
-    src.delete(); gray.delete(); circles.delete();
-    return;
+  let bin = "";
+  for (let r=0; r<rows; r++) {
+    for (let c=0; c<cols; c++) {
+      const x = Math.floor(c * cellW + cellW/2);
+      const y = Math.floor(r * cellW + cellW/2);
+      if (x >= img.width || y >= img.height) continue;
+      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      const brightness = (pixel[0]+pixel[1]+pixel[2]) / 3;
+      bin += (brightness < THRESHOLD) ? "1" : "0";
+    }
   }
 
-  let circleData = [];
-  for (let i = 0; i < circles.cols; ++i) {
-    let x = circles.data32F[i * 3];
-    let y = circles.data32F[i * 3 + 1];
-    let r = circles.data32F[i * 3 + 2];
-    let mask = new Decoder.Mat.zeros(gray.rows, gray.cols, Decoder.CV_8UC1);
-    Decoder.circle(mask, new Decoder.Point(x, y), r, new Decoder.Scalar(255, 255, 255, 255), -1);
-    let mean = Decoder.mean(gray, mask)[0];
-    let bit = (mean < 127) ? "1" : "0";
-    circleData.push({x, y, bit});
-    mask.delete();
-  }
-
-  // Sort circles by row and col
-  circleData.sort((a, b) => {
-    if (Math.abs(a.y - b.y) > 15) return a.y - b.y;
-    return a.x - b.x;
-  });
-
-  let bin = circleData.map(c => c.bit).join("");
+  // Convert binary → text
   let text = "";
   for (let i=0; i<bin.length; i+=8) {
     let byte = bin.substr(i, 8);
-    if (byte.length === 8) text += String.fromCharCode(parseInt(byte, 2));
+    if (byte.length === 8) {
+      text += String.fromCharCode(parseInt(byte, 2));
+    }
   }
 
   decodedTextDiv.textContent = text || "[Could not decode]";
-  resultModal.style.display = "flex";
-
-  src.delete(); gray.delete(); circles.delete();
+  modal.style.display = "flex";
 }
 
-closeBtn.addEventListener("click", () => {
-  resultModal.style.display = "none";
-});
+closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
 </script>
 
 </body>
