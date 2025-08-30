@@ -1,63 +1,40 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="ASCII/UTF-8">
+<meta charset="UTF-8">
 <title>Binary Whisper Decoder</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
+  :root { --bg:#ffffff; --grid:#050505; }
   body {
-    margin: 0;
-    height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    background: white;
-    background-image: 
-      linear-gradient(to right, #050505 1px, transparent 1px),
-      linear-gradient(to bottom, #050505 1px, transparent 1px);
+    margin:0; height:100vh; display:flex; justify-content:center; align-items:center;
+    background: var(--bg);
+    background-image:
+      linear-gradient(to right, var(--grid) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
     background-size: 40px 40px;
-    font-family: monospace;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   }
-  #dropzone {
-    background: #050505;
-    color: white;
-    padding: 1.2em 3em;
-    border-radius: 2em;
-    font-size: 1.2em;
-    cursor: pointer;
-    transition: background 0.3s;
+  #dropzone{
+    background:#050505; color:#fff; padding:1.2em 3em; border-radius:2em;
+    font-size:1.1em; cursor:pointer; transition:.25s background;
+    user-select:none;
   }
-  #dropzone:hover { background: #222; }
-  #canvas { display: none; }
+  #dropzone:hover{ background:#222; }
+  #canvas{ display:none; }
 
-  /* Modal popup */
-  #modal {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    background: rgba(0,0,0,0.7);
-    display: none;
-    justify-content: center;
-    align-items: center;
+  /* Modal */
+  #modal{
+    position:fixed; inset:0; background:rgba(0,0,0,.7);
+    display:none; justify-content:center; align-items:center; padding:1rem;
   }
-  #modalContent {
-    background: #fff;
-    color: #050505;
-    padding: 2em;
-    border-radius: 1em;
-    max-width: 600px;
-    font-family: monospace;
-    white-space: pre-wrap;
-    text-align: center;
+  #modalContent{
+    background:#fff; color:#050505; padding:1.5rem; border-radius:1rem;
+    max-width:680px; width:min(94vw,680px); text-align:center; white-space:pre-wrap;
   }
-  #closeBtn {
-    margin-top: 1em;
-    padding: 0.5em 1.5em;
-    border: none;
-    border-radius: 0.5em;
-    background: #050505;
-    color: white;
-    font-family: monospace;
-    cursor: pointer;
+  #closeBtn{
+    margin-top:1rem; padding:.5rem 1.25rem; border:0; border-radius:.5rem;
+    background:#050505; color:#fff; cursor:pointer;
   }
 </style>
 </head>
@@ -75,80 +52,186 @@
 </div>
 
 <script>
-const dropzone = document.getElementById("dropzone");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const modal = document.getElementById("modal");
-const decodedTextDiv = document.getElementById("decodedText");
-const closeBtn = document.getElementById("closeBtn");
+const dropzone = document.getElementById('dropzone');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const modal = document.getElementById('modal');
+const decodedTextDiv = document.getElementById('decodedText');
+const closeBtn = document.getElementById('closeBtn');
 
-const THRESHOLD = 180; // adjust if needed
+// Prevent browser navigation on drop anywhere
+['dragenter','dragover','dragleave','drop'].forEach(ev=>{
+  document.addEventListener(ev, e => e.preventDefault(), false);
+});
 
-// --- Upload handlers ---
-dropzone.addEventListener("click", () => {
-  let input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/*";
+// Handlers
+dropzone.addEventListener('click', ()=>{
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
   input.onchange = e => handleFile(e.target.files[0]);
   input.click();
 });
-dropzone.addEventListener("dragover", e => { 
-  e.preventDefault(); 
-  dropzone.style.background = "#333"; 
+dropzone.addEventListener('dragover', e => {
+  e.preventDefault(); e.stopPropagation();
+  dropzone.style.background = '#333';
 });
-dropzone.addEventListener("dragleave", e => { 
-  dropzone.style.background = "#050505"; 
+dropzone.addEventListener('dragleave', e => {
+  e.preventDefault(); e.stopPropagation();
+  dropzone.style.background = '#050505';
 });
-dropzone.addEventListener("drop", e => {
-  e.preventDefault();
-  dropzone.style.background = "#050505";
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); e.stopPropagation();
+  dropzone.style.background = '#050505';
   handleFile(e.dataTransfer.files[0]);
 });
+closeBtn.addEventListener('click', ()=> modal.style.display = 'none');
 
-function handleFile(file) {
-  if (!file) return;
+function handleFile(file){
+  if(!file) return;
   const img = new Image();
-  img.onload = () => decodeImage(img);
+  img.onload = ()=> decodeImage(img);
   img.src = URL.createObjectURL(file);
 }
 
-function decodeImage(img) {
+// ---- Core decoder (no OpenCV) ----
+function decodeImage(img){
   canvas.width = img.width;
   canvas.height = img.height;
   ctx.drawImage(img, 0, 0);
 
-  // Estimate grid cell size
-  const cellW = Math.floor(img.width / 20); // assume max 20 cols (adjust if needed)
-  const cols = Math.round(img.width / cellW);
-  const rows = Math.round(img.height / cellW);
+  // 1) Estimate background (corners)
+  const bg = estimateBackgroundBrightness();
 
-  let bin = "";
-  for (let r=0; r<rows; r++) {
-    for (let c=0; c<cols; c++) {
-      const x = Math.floor(c * cellW + cellW/2);
-      const y = Math.floor(r * cellW + cellW/2);
-      if (x >= img.width || y >= img.height) continue;
-      const pixel = ctx.getImageData(x, y, 1, 1).data;
-      const brightness = (pixel[0]+pixel[1]+pixel[2]) / 3;
-      bin += (brightness < THRESHOLD) ? "1" : "0";
+  // 2) Detect vertical and horizontal grid lines (1px, #050505)
+  const vLines = detectGridLinesVertical(img.width, img.height);
+  const hLines = detectGridLinesHorizontal(img.width, img.height);
+  if (vLines.length < 2 || hLines.length < 2){
+    show("[Grid not detected. Try a raw export PNG from Processing.]");
+    return;
+  }
+
+  // 3) Use consecutive line gaps as cells
+  const cols = vLines.length - 1;
+  const rows = hLines.length - 1;
+
+  // 4) Build bits by sampling each cell center
+  const DIFF_THRESHOLD = 18; // center vs background delta to consider "filled"
+  let bits = [];
+  for(let r=0;r<rows;r++){
+    const y = Math.round((hLines[r] + hLines[r+1]) / 2);
+    for(let c=0;c<cols;c++){
+      const x = Math.round((vLines[c] + vLines[c+1]) / 2);
+      const centerB = avgBrightnessAround(x, y, 3); // small 3x3 patch
+      const bit = (Math.abs(centerB - bg) > DIFF_THRESHOLD) ? 1 : 0;
+      bits.push(bit);
     }
   }
 
-  // Convert binary → text
-  let text = "";
-  for (let i=0; i<bin.length; i+=8) {
-    let byte = bin.substr(i, 8);
-    if (byte.length === 8) {
-      text += String.fromCharCode(parseInt(byte, 2));
+  // 5) Convert bits -> bytes
+  let bytes = [];
+  for(let i=0;i<bits.length;i+=8){
+    if(i+8 <= bits.length){
+      let val = 0;
+      for(let k=0;k<8;k++) val = (val<<1) | bits[i+k];
+      bytes.push(val);
     }
   }
 
-  decodedTextDiv.textContent = text || "[Could not decode]";
-  modal.style.display = "flex";
+  // Trim trailing nulls (padding from empty cells)
+  while(bytes.length && bytes[bytes.length-1] === 0) bytes.pop();
+
+  // 6) Bytes -> text (basic ASCII/UTF-8-safe for <= 255 from Processing)
+  const text = bytes.map(b => String.fromCharCode(b)).join('');
+
+  show(text || "[Could not decode]");
 }
 
-closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
-</script>
+// --- Helpers ---
+function brightnessAt(x,y){
+  const d = ctx.getImageData(x,y,1,1).data;
+  return (d[0] + d[1] + d[2]) / 3;
+}
+function avgBrightnessAround(x,y,halfWin){
+  let sum=0, count=0;
+  for(let dy=-halfWin; dy<=halfWin; dy++){
+    for(let dx=-halfWin; dx<=halfWin; dx++){
+      const xx = Math.max(0, Math.min(canvas.width-1, x+dx));
+      const yy = Math.max(0, Math.min(canvas.height-1, y+dy));
+      const d = ctx.getImageData(xx,yy,1,1).data;
+      sum += (d[0]+d[1]+d[2])/3; count++;
+    }
+  }
+  return sum / count;
+}
+function estimateBackgroundBrightness(){
+  const p = 6; // sample padding
+  const pts = [
+    [p,p], [canvas.width-p,p], [p,canvas.height-p], [canvas.width-p,canvas.height-p]
+  ];
+  let sum=0;
+  pts.forEach(([x,y])=> sum += brightnessAt(x,y));
+  return sum/pts.length;
+}
 
+function detectGridLinesVertical(w,h){
+  // Sample many rows per x and count how often it's "dark"
+  const SAMPLES = Math.max(30, Math.floor(h/20));
+  const DARK = 70; // brightness threshold for grid line (#050505)
+  const ys = new Array(SAMPLES).fill(0).map((_,i)=> Math.round(i*(h-1)/(SAMPLES-1)));
+
+  const score = new Array(w).fill(0);
+  for(let x=0; x<w; x++){
+    let darkCount=0;
+    for(let i=0;i<ys.length;i++){
+      const y = ys[i];
+      const b = brightnessAt(x,y);
+      if (b < DARK) darkCount++;
+    }
+    score[x] = darkCount / SAMPLES; // 0..1
+  }
+  return compressPeaks(score, 0.5); // keep columns with >50% dark hits
+}
+
+function detectGridLinesHorizontal(w,h){
+  const SAMPLES = Math.max(30, Math.floor(w/20));
+  const DARK = 70;
+  const xs = new Array(SAMPLES).fill(0).map((_,i)=> Math.round(i*(w-1)/(SAMPLES-1)));
+
+  const score = new Array(h).fill(0);
+  for(let y=0; y<h; y++){
+    let darkCount=0;
+    for(let i=0;i<xs.length;i++){
+      const x = xs[i];
+      const b = brightnessAt(x,y);
+      if (b < DARK) darkCount++;
+    }
+    score[y] = darkCount / SAMPLES;
+  }
+  return compressPeaks(score, 0.5);
+}
+
+function compressPeaks(scoreArr, thr){
+  // Group contiguous indices above threshold, return their centers
+  const out = [];
+  let i=0;
+  while(i < scoreArr.length){
+    if(scoreArr[i] >= thr){
+      let start=i;
+      while(i < scoreArr.length && scoreArr[i] >= thr) i++;
+      let end=i-1;
+      out.push(Math.round((start+end)/2));
+    }else{
+      i++;
+    }
+  }
+  return out;
+}
+
+function show(msg){
+  decodedTextDiv.textContent = msg;
+  modal.style.display = 'flex';
+}
+</script>
 </body>
 </html>
