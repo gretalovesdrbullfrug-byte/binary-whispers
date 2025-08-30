@@ -78,6 +78,13 @@
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 
 <script>
+  // 🚫 Prevent browser from opening dropped files anywhere
+["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
+  document.addEventListener(eventName, e => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, false);
+});
 const dropzone = document.getElementById("dropzone");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
