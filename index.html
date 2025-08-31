@@ -19,14 +19,6 @@
     font-family: monospace;
   }
   
-  #status {
-    margin-bottom: 20px;
-    padding: 10px 20px;
-    background: #f0f0f0;
-    border-radius: 5px;
-    font-size: 14px;
-  }
-  
   #dropzone {
     background: #050505;
     color: white;
@@ -35,14 +27,10 @@
     font-size: 1.2em;
     cursor: pointer;
     transition: background 0.3s;
+    text-align: center;
   }
   
   #dropzone:hover { background: #222; }
-  #dropzone.disabled { 
-    background: #666; 
-    cursor: not-allowed; 
-  }
-  
   #canvas { display: none; }
   
   #modal {
@@ -60,12 +48,11 @@
     color: #050505;
     padding: 2em;
     border-radius: 1em;
-    max-width: 600px;
+    max-width: 80vw;
     max-height: 80vh;
     overflow-y: auto;
     font-family: monospace;
     white-space: pre-wrap;
-    text-align: left;
   }
   
   #closeBtn {
@@ -79,29 +66,42 @@
     cursor: pointer;
   }
   
+  .result-section {
+    margin-bottom: 1.5em;
+    padding: 1em;
+    border: 1px solid #ddd;
+    border-radius: 0.5em;
+  }
+  
   .debug-info {
     font-size: 12px;
     color: #666;
-    margin-top: 10px;
+    background: #f8f8f8;
+    padding: 1em;
+    border-radius: 0.5em;
   }
 </style>
 </head>
 <body>
 
-<div id="status">Loading OpenCV.js...</div>
-<div id="dropzone" class="disabled">drop your whisper here</div>
+<div id="dropzone">drop your whisper here</div>
 <canvas id="canvas"></canvas>
 
 <div id="modal">
   <div id="modalContent">
-    <div id="decodedText"></div>
-    <div id="debugInfo" class="debug-info"></div>
+    <div class="result-section">
+      <h3>Decoded Message:</h3>
+      <div id="decodedText"></div>
+    </div>
+    <div class="result-section debug-info">
+      <h4>Debug Info:</h4>
+      <div id="debugInfo"></div>
+    </div>
     <button id="closeBtn">close</button>
   </div>
 </div>
 
 <script>
-let cvReady = false;
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const dropzone = document.getElementById("dropzone");
@@ -109,27 +109,8 @@ const modal = document.getElementById("modal");
 const decodedTextDiv = document.getElementById("decodedText");
 const debugInfo = document.getElementById("debugInfo");
 const closeBtn = document.getElementById("closeBtn");
-const status = document.getElementById("status");
 
-// Wait for OpenCV to load
-function onOpenCvReady() {
-  cvReady = true;
-  status.textContent = "Ready to decode whispers!";
-  dropzone.classList.remove("disabled");
-  console.log("OpenCV.js loaded successfully");
-}
-
-// Check if OpenCV is already loaded, otherwise wait
-if (typeof cv !== 'undefined') {
-  onOpenCvReady();
-} else {
-  // Set up the callback for when OpenCV loads
-  window.Module = {
-    onRuntimeInitialized: onOpenCvReady
-  };
-}
-
-// Prevent browser from hijacking drops
+// Prevent browser default drag behavior
 ["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
   document.addEventListener(eventName, e => e.preventDefault(), false);
 });
@@ -138,7 +119,7 @@ if (typeof cv !== 'undefined') {
 dropzone.addEventListener("dragover", e => {
   e.preventDefault();
   e.stopPropagation();
-  if (cvReady) dropzone.style.background = "#333";
+  dropzone.style.background = "#333";
 });
 
 dropzone.addEventListener("dragleave", e => {
@@ -151,147 +132,278 @@ dropzone.addEventListener("drop", e => {
   e.preventDefault();
   e.stopPropagation();
   dropzone.style.background = "#050505";
-  if (cvReady) handleFile(e.dataTransfer.files[0]);
+  console.log("Drop event triggered");
+  console.log("Files:", e.dataTransfer.files);
+  handleFile(e.dataTransfer.files[0]);
 });
 
 dropzone.addEventListener("click", () => {
-  if (!cvReady) return;
+  console.log("Click event triggered");
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/*";
-  input.onchange = e => handleFile(e.target.files[0]);
+  input.onchange = e => {
+    console.log("File input changed");
+    handleFile(e.target.files[0]);
+  };
   input.click();
 });
 
 function handleFile(file) {
-  if (!file || !cvReady) return;
+  console.log("=== HANDLE FILE START ===");
+  console.log("File object:", file);
   
-  status.textContent = "Processing image...";
+  if (!file) {
+    console.log("No file provided");
+    showResult("[No file]", "No file was provided");
+    return;
+  }
   
-  const img = new Image();
-  img.onload = () => {
-    canvas.width = img.width;
-    canvas.height = img.height;
-    ctx.drawImage(img, 0, 0);
+  console.log("File name:", file.name);
+  console.log("File size:", file.size);
+  console.log("File type:", file.type);
+  
+  // Check if it's an image
+  if (!file.type.startsWith('image/')) {
+    console.log("Not an image file");
+    showResult("[Not an image]", `File type: ${file.type}\nPlease upload an image file.`);
+    return;
+  }
+  
+  // Use FileReader for better compatibility
+  const reader = new FileReader();
+  
+  reader.onload = function(e) {
+    console.log("FileReader onload triggered");
+    console.log("Result length:", e.target.result.length);
     
-    setTimeout(() => {
+    const img = new Image();
+    
+    img.onload = function() {
+      console.log("Image onload triggered");
+      console.log("Image dimensions:", this.width, "x", this.height);
+      
       try {
-        decodeImage();
+        canvas.width = this.width;
+        canvas.height = this.height;
+        ctx.drawImage(this, 0, 0);
+        console.log("Image drawn to canvas successfully");
+        
+        // Immediate test
+        setTimeout(() => {
+          console.log("=== STARTING DECODE ===");
+          decodeGrid();
+        }, 50);
+        
       } catch (error) {
-        console.error("Decoding error:", error);
-        showResult("[Error during decoding: " + error.message + "]", "");
+        console.error("Canvas error:", error);
+        showResult("[Canvas error]", "Error: " + error.message);
       }
-    }, 100);
+    };
+    
+    img.onerror = function(error) {
+      console.error("Image load error from FileReader:", error);
+      console.error("Image src length:", this.src.length);
+      showResult("[Image load failed]", "Image could not be loaded from FileReader data");
+    };
+    
+    console.log("Setting image src...");
+    img.src = e.target.result;
   };
   
-  img.onerror = () => {
-    status.textContent = "Error loading image";
+  reader.onerror = function(error) {
+    console.error("FileReader error:", error);
+    showResult("[File read error]", "Could not read file: " + error);
   };
   
-  img.src = URL.createObjectURL(file);
+  console.log("Starting FileReader...");
+  reader.readAsDataURL(file);
 }
 
-function decodeImage() {
-  let src = cv.imread(canvas);
-  let gray = new cv.Mat();
+function decodeGrid() {
+  console.log("=== DECODE GRID START ===");
   
   try {
-    // Convert to grayscale
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    console.log("Getting image data...");
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    console.log("Image data obtained, length:", imageData.data.length);
     
-    // Apply slight blur to reduce noise
-    cv.medianBlur(gray, gray, 3);
+    const data = imageData.data;
+    let debugText = `Image: ${canvas.width}x${canvas.height}px\n`;
     
-    // Detect circles with more relaxed parameters
-    let circles = new cv.Mat();
-    cv.HoughCircles(
-      gray, circles, cv.HOUGH_GRADIENT, 
-      1,     // dp
-      15,    // minDist (reduced from 20)
-      80,    // param1 (reduced from 100)
-      25,    // param2 (reduced from 30)
-      5,     // minRadius (reduced from 10)
-      100    // maxRadius (increased from 60)
-    );
-    
-    let debugText = `Image size: ${canvas.width}x${canvas.height}\n`;
-    debugText += `Circles detected: ${circles.cols}\n`;
-    
-    if (circles.cols === 0) {
-      showResult("[No circles detected - try adjusting the image contrast]", debugText);
-      return;
-    }
-    
-    // Extract circle data
-    let circleData = [];
-    for (let i = 0; i < circles.cols; i++) {
-      let x = Math.round(circles.data32F[i * 3]);
-      let y = Math.round(circles.data32F[i * 3 + 1]);
-      let r = Math.round(circles.data32F[i * 3 + 2]);
+    // Try different grid sizes (expanded range for larger grids)
+    for (let gridSize = 3; gridSize <= 60; gridSize++) {
+      const cellWidth = canvas.width / gridSize;
+      const cellHeight = canvas.height / gridSize;
       
-      // Create mask for this circle
-      let mask = cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8UC1);
-      cv.circle(mask, new cv.Point(x, y), Math.max(r-2, 1), new cv.Scalar(255), -1);
+      if (cellWidth < 3 || cellHeight < 3) continue;
       
-      // Calculate mean brightness inside circle
-      let mean = cv.mean(gray, mask)[0];
-      let bit = (mean < 128) ? "1" : "0";
+      const bits = [];
+      let filledCells = 0;
+      let detectionDetails = [];
       
-      circleData.push({x, y, r, mean: Math.round(mean), bit});
-      mask.delete();
-    }
-    
-    // Sort circles: top to bottom, then left to right
-    circleData.sort((a, b) => {
-      const rowTolerance = 20; // pixels tolerance for same row
-      if (Math.abs(a.y - b.y) > rowTolerance) {
-        return a.y - b.y;
+      for (let row = 0; row < gridSize; row++) {
+        for (let col = 0; col < gridSize; col++) {
+          const centerX = Math.floor(col * cellWidth + cellWidth / 2);
+          const centerY = Math.floor(row * cellHeight + cellHeight / 2);
+          
+          // Sample a smaller area for larger grids
+          const sampleRadius = Math.max(2, Math.min(cellWidth, cellHeight) * 0.25);
+          const result = sampleAreaAdvanced(data, canvas.width, centerX, centerY, sampleRadius);
+          const bit = result.hasFilledCircle ? "1" : "0";
+          bits.push(bit);
+          
+          if (bit === "1") filledCells++;
+          
+          if (gridSize === 5) { // Debug the 5x5 grid specifically
+            detectionDetails.push(`(${row},${col}): blue=${result.blueRatio.toFixed(3)} dark=${result.darkness.toFixed(3)} bit=${bit}`);
+          }
+        }
       }
-      return a.x - b.x;
-    });
-    
-    // Build binary string
-    let binaryString = circleData.map(c => c.bit).join("");
-    debugText += `Binary length: ${binaryString.length}\n`;
-    debugText += `Binary: ${binaryString}\n\n`;
-    
-    // Convert binary to text
-    let text = "";
-    let validBytes = 0;
-    for (let i = 0; i < binaryString.length; i += 8) {
-      let byte = binaryString.substr(i, 8);
-      if (byte.length === 8) {
-        let charCode = parseInt(byte, 2);
-        if (charCode >= 32 && charCode <= 126) { // printable ASCII
-          text += String.fromCharCode(charCode);
-          validBytes++;
-        } else if (charCode === 10 || charCode === 13) { // newlines
-          text += String.fromCharCode(charCode);
-          validBytes++;
-        } else {
-          text += "�"; // replacement character for invalid bytes
+      
+      const fillRatio = filledCells / (gridSize * gridSize);
+      
+      // Test if this produces valid text
+      if (fillRatio > 0.05 && fillRatio < 0.95) {
+        const text = binaryToText(bits.join(""));
+        const score = text.length + (text.match(/[a-zA-Z]/g) || []).length * 2;
+        
+        console.log(`Grid ${gridSize}x${gridSize}: fill=${fillRatio.toFixed(3)}, text="${text}", score=${score}`);
+        
+        if (score > bestScore) {
+          bestScore = score;
+          bestResult = {
+            gridSize,
+            bits,
+            text,
+            fillRatio,
+            cellWidth,
+            cellHeight,
+            detectionDetails
+          };
         }
       }
     }
     
-    debugText += `Valid bytes decoded: ${validBytes}\n`;
-    debugText += `Circle details:\n`;
-    circleData.forEach((c, i) => {
-      debugText += `${i+1}: (${c.x},${c.y}) r=${c.r} mean=${c.mean} bit=${c.bit}\n`;
-    });
+    if (bestResult) {
+      debugText += `Best grid: ${bestResult.gridSize}x${bestResult.gridSize}\n`;
+      debugText += `Cell size: ${bestResult.cellWidth.toFixed(1)}x${bestResult.cellHeight.toFixed(1)}px\n`;
+      debugText += `Fill ratio: ${(bestResult.fillRatio * 100).toFixed(1)}%\n`;
+      debugText += `Binary length: ${bestResult.bits.length}\n`;
+      debugText += `Binary: ${bestResult.bits.join("")}\n\n`;
+      
+      if (bestResult.detectionDetails && bestResult.detectionDetails.length > 0) {
+        debugText += "Cell detection details:\n";
+        bestResult.detectionDetails.forEach(detail => {
+          debugText += detail + "\n";
+        });
+      }
+      
+      console.log("Decode successful:", bestResult.text);
+      showResult(bestResult.text, debugText);
+    } else {
+      console.log("No valid grid found");
+      debugText += "No valid grid pattern detected.\n";
+      debugText += "Tried grid sizes 3-40, none produced readable text.\n";
+      debugText += "This might mean the image format is different than expected.";
+      showResult("[Could not decode]", debugText);
+    }
     
-    showResult(text || "[Could not decode meaningful text]", debugText);
-    
-  } finally {
-    // Clean up
-    src.delete();
-    gray.delete();
-    if (typeof circles !== 'undefined') circles.delete();
-    status.textContent = "Ready to decode whispers!";
+  } catch (error) {
+    console.error("Error in decodeGrid:", error);
+    showResult("[Decoding error]", "Error: " + error.message + "\nStack: " + error.stack);
   }
 }
 
+function sampleAreaAdvanced(data, width, centerX, centerY, radius) {
+  let totalRed = 0, totalGreen = 0, totalBlue = 0;
+  let totalDarkness = 0;
+  let sampleCount = 0;
+  
+  // For very small cells, sample a minimum area
+  const effectiveRadius = Math.max(radius, 2);
+  const radiusSquared = effectiveRadius * effectiveRadius;
+  
+  const startX = Math.max(0, Math.floor(centerX - effectiveRadius));
+  const endX = Math.min(width - 1, Math.floor(centerX + effectiveRadius));
+  const startY = Math.max(0, Math.floor(centerY - effectiveRadius));
+  const endY = Math.min(Math.floor(data.length / (width * 4)) - 1, Math.floor(centerY + effectiveRadius));
+  
+  for (let y = startY; y <= endY; y++) {
+    for (let x = startX; x <= endX; x++) {
+      const dx = x - centerX;
+      const dy = y - centerY;
+      
+      if (dx * dx + dy * dy <= radiusSquared) {
+        const idx = (y * width + x) * 4;
+        if (idx + 2 < data.length) {
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          
+          totalRed += r;
+          totalGreen += g;
+          totalBlue += b;
+          
+          const brightness = (r + g + b) / 3;
+          totalDarkness += (255 - brightness) / 255;
+          sampleCount++;
+        }
+      }
+    }
+  }
+  
+  if (sampleCount === 0) {
+    return { hasFilledCircle: false, darkness: 0, blueRatio: 0, colorRatio: 0 };
+  }
+  
+  const avgRed = totalRed / sampleCount;
+  const avgGreen = totalGreen / sampleCount;
+  const avgBlue = totalBlue / sampleCount;
+  const darkness = totalDarkness / sampleCount;
+  
+  // Check for colored circles (blue, purple, pink, etc.)
+  const isBlue = avgBlue > avgRed + 30 && avgBlue > avgGreen + 30 && avgBlue > 80;
+  const isPurple = avgBlue > 80 && avgRed > 80 && avgBlue > avgGreen + 20;
+  const isPink = avgRed > 80 && avgBlue > 80 && avgRed > avgGreen + 20;
+  const isColored = isBlue || isPurple || isPink;
+  const isDark = darkness > 0.3;
+  
+  // Calculate overall "color intensity" - how much it differs from gray
+  const gray = (avgRed + avgGreen + avgBlue) / 3;
+  const colorVariance = Math.abs(avgRed - gray) + Math.abs(avgGreen - gray) + Math.abs(avgBlue - gray);
+  const colorRatio = colorVariance / 255;
+  
+  return {
+    hasFilledCircle: isColored || isDark || colorRatio > 0.3,
+    darkness: darkness,
+    blueRatio: avgBlue / 255,
+    colorRatio: colorRatio
+  };
+}
+
+function binaryToText(binaryString) {
+  let text = "";
+  
+  for (let i = 0; i < binaryString.length; i += 8) {
+    const byte = binaryString.substr(i, 8);
+    if (byte.length === 8) {
+      const charCode = parseInt(byte, 2);
+      if (charCode >= 32 && charCode <= 126) {
+        text += String.fromCharCode(charCode);
+      } else if (charCode === 10 || charCode === 13) {
+        text += String.fromCharCode(charCode);
+      } else if (charCode === 0) {
+        break; // null terminator
+      }
+    }
+  }
+  
+  return text;
+}
+
 function showResult(text, debug) {
+  console.log("Showing result:", text);
   decodedTextDiv.textContent = text;
   debugInfo.textContent = debug;
   modal.style.display = "flex";
@@ -300,10 +412,6 @@ function showResult(text, debug) {
 closeBtn.addEventListener("click", () => {
   modal.style.display = "none";
 });
-
-// Handle window drops
-window.addEventListener("dragover", e => e.preventDefault());
-window.addEventListener("drop", e => e.preventDefault());
 </script>
 
 </body>
