@@ -1,57 +1,73 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Binary Whisper Decoder</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="utf-8" />
+<title>Binary Whisper Decoder — auto grid</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
-  :root { --bg:#ffffff; --grid:#050505; }
-  body {
-    margin:0; height:100vh; display:flex; justify-content:center; align-items:center;
-    background: var(--bg);
-    background-image:
-      linear-gradient(to right, var(--grid) 1px, transparent 1px),
-      linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
-    background-size: 40px 40px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  }
-  #dropzone{
-    background:#050505; color:#fff; padding:1.2em 3em; border-radius:2em;
-    font-size:1.1em; cursor:pointer; transition:.25s background;
-    user-select:none;
-  }
-  #dropzone:hover{ background:#222; }
-  #canvas{ display:none; }
+:root { --bg:#ffffff; --grid:#050505; --accent:#f0a83a; }
+html,body { height:100%; margin:0; }
+body {
+  display:flex; align-items:center; justify-content:center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  background: var(--bg);
+  background-image:
+    linear-gradient(to right, var(--grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+.container { text-align:center; padding:1rem; }
+#dropzone {
+  display:inline-block; padding:1.1rem 2.6rem; border-radius:28px;
+  background:#050505; color:#fff; cursor:pointer; user-select:none;
+  transition: .18s background;
+}
+#dropzone:hover { background:#222; }
+#canvas { display:block; margin: 1rem auto; max-width: 90vw; border-radius:6px; box-shadow:0 6px 18px rgba(0,0,0,.08); }
+#controls { margin-top:.6rem; color:#222; font-size:.9rem; }
+#debugHint { color:#666; font-size:.8rem; margin-top:.25rem; }
 
-  /* Modal */
-  #modal{
-    position:fixed; inset:0; background:rgba(0,0,0,.7);
-    display:none; justify-content:center; align-items:center; padding:1rem;
-  }
-  #modalContent{
-    background:#fff; color:#050505; padding:1.5rem; border-radius:1rem;
-    max-width:680px; width:min(94vw,680px); text-align:center; white-space:pre-wrap;
-  }
-  #closeBtn{
-    margin-top:1rem; padding:.5rem 1.25rem; border:0; border-radius:.5rem;
-    background:#050505; color:#fff; cursor:pointer;
-  }
+#modal {
+  position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+  background: rgba(0,0,0,.65); z-index:9999;
+}
+#modalCard {
+  background:#fff; color:#050505; padding:1.25rem; border-radius:12px; width:min(92vw,720px);
+  font-family:inherit; white-space:pre-wrap; text-align:left;
+}
+#closeBtn {
+  margin-top:.8rem; background:#050505; color:#fff; border:0; padding:.45rem .9rem; border-radius:.45rem; cursor:pointer;
+}
+.badge { display:inline-block; background:var(--accent); color:#050505; padding:.15rem .5rem; border-radius:.45rem; margin-left:.6rem; font-weight:600; }
 </style>
 </head>
 <body>
+<div class="container">
+  <div id="dropzone">drop your whisper here <span class="badge">auto grid</span></div>
+  <canvas id="canvas" width="800" height="800" style="display:none;"></canvas>
+  <div id="controls">Press <strong>D</strong> to toggle debug overlay. The decoder auto-detects grid lines and cell size.</div>
+  <div id="debugHint">(If detection fails, try exporting an uncompressed PNG from Processing)</div>
+</div>
 
-<div id="dropzone">drop your whisper here</div>
-<canvas id="canvas"></canvas>
-
-<!-- Modal -->
-<div id="modal">
-  <div id="modalContent">
+<!-- modal -->
+<div id="modal" aria-hidden="true">
+  <div id="modalCard">
     <div id="decodedText"></div>
     <button id="closeBtn">close</button>
   </div>
 </div>
 
 <script>
+/* ===== CONFIG (tweak these if needed) ===== */
+const GRID_LINE_DARKNESS_THRESH = 0.18; // fraction of max darkness to pick as line peaks (0..1)
+const GRID_LINE_MIN_FRACTION = 0.12;    // minimum fraction of sampled pixels that must be dark to consider a true line
+const SAMPLE_ROWS = 60;                 // how many rows to sample when scanning vertical lines
+const SAMPLE_COLS = 60;                 // how many columns to sample when scanning horizontal lines
+const CENTER_SAMPLE_RADIUS_RATIO = 0.32; // fraction of cell size to sample for center (0..0.5)
+const FILL_BRIGHTNESS_DELTA = 18;      // absolute brightness diff to treat as filled (tweak if needed)
+const MIN_GROUP_WIDTH = 1;             // minimal width in px to treat as a grid line group
+
+/* ===== DOM ===== */
 const dropzone = document.getElementById('dropzone');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -59,77 +75,238 @@ const modal = document.getElementById('modal');
 const decodedTextDiv = document.getElementById('decodedText');
 const closeBtn = document.getElementById('closeBtn');
 
-// Prevent browser navigation on drop anywhere
+let lastImageData = null;
+let debug = false;
+let debugOverlay = { vLines:[], hLines:[], centers:[] };
+
+/* Prevent default nav on drop outside */
 ['dragenter','dragover','dragleave','drop'].forEach(ev=>{
-  document.addEventListener(ev, e => e.preventDefault(), false);
+  document.addEventListener(ev, e=>{ e.preventDefault(); }, { passive:false });
 });
 
-// Handlers
-dropzone.addEventListener('click', ()=>{
+/* Drop + click handlers */
+dropzone.addEventListener('click', () => {
   const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'image/*';
+  input.type='file'; input.accept='image/*';
   input.onchange = e => handleFile(e.target.files[0]);
   input.click();
 });
-dropzone.addEventListener('dragover', e => {
-  e.preventDefault(); e.stopPropagation();
-  dropzone.style.background = '#333';
+dropzone.addEventListener('dragover', e=>{ e.preventDefault(); dropzone.style.background='#333'; });
+dropzone.addEventListener('dragleave', e=>{ dropzone.style.background='#050505'; });
+dropzone.addEventListener('drop', e=>{
+  e.preventDefault(); e.stopPropagation(); dropzone.style.background='#050505';
+  const f = e.dataTransfer.files[0]; handleFile(f);
 });
-dropzone.addEventListener('dragleave', e => {
-  e.preventDefault(); e.stopPropagation();
-  dropzone.style.background = '#050505';
-});
-dropzone.addEventListener('drop', e => {
-  e.preventDefault(); e.stopPropagation();
-  dropzone.style.background = '#050505';
-  handleFile(e.dataTransfer.files[0]);
-});
-closeBtn.addEventListener('click', ()=> modal.style.display = 'none');
 
+/* keyboard: toggle debug */
+document.addEventListener('keydown', e=>{
+  if(e.key === 'd' || e.key === 'D'){ debug = !debug; drawDebugOverlay(); }
+});
+
+/* close modal */
+closeBtn.addEventListener('click', ()=> modal.style.display='none');
+
+/* main file handling */
 function handleFile(file){
   if(!file) return;
   const img = new Image();
-  img.onload = ()=> decodeImage(img);
+  img.onload = ()=>{
+    canvas.width = img.width; canvas.height = img.height;
+    canvas.style.display = 'block';
+    ctx.drawImage(img,0,0);
+    // cache pixel buffer for fast access
+    lastImageData = ctx.getImageData(0,0,canvas.width, canvas.height);
+    try {
+      decodeAutoGrid();
+    } catch(err) {
+      console.error(err);
+      showModal("[Decoder error] " + err.message);
+    }
+  };
   img.src = URL.createObjectURL(file);
 }
 
-// ---- Core decoder (no OpenCV) ----
-function decodeImage(img){
-  canvas.width = img.width;
-  canvas.height = img.height;
-  ctx.drawImage(img, 0, 0);
+/* utility to get brightness from cached image buffer */
+function brightnessAt(x,y){
+  x = Math.max(0, Math.min(canvas.width-1, Math.round(x)));
+  y = Math.max(0, Math.min(canvas.height-1, Math.round(y)));
+  const d = lastImageData.data;
+  const i = (y * canvas.width + x) * 4;
+  return (d[i] + d[i+1] + d[i+2]) / 3; // 0..255
+}
 
-  // 1) Estimate background (corners)
-  const bg = estimateBackgroundBrightness();
+/* average brightness in small square */
+function avgBrightnessRect(cx,cy,half){
+  let sum=0, count=0;
+  for(let yy = Math.round(cy-half); yy<=Math.round(cy+half); yy++){
+    for(let xx = Math.round(cx-half); xx<=Math.round(cx+half); xx++){
+      if(xx<0 || xx>=canvas.width || yy<0 || yy>=canvas.height) continue;
+      sum += brightnessAt(xx,yy); count++;
+    }
+  }
+  return count? sum/count : 255;
+}
 
-  // 2) Detect vertical and horizontal grid lines (1px, #050505)
-  const vLines = detectGridLinesVertical(img.width, img.height);
-  const hLines = detectGridLinesHorizontal(img.width, img.height);
-  if (vLines.length < 2 || hLines.length < 2){
-    show("[Grid not detected. Try a raw export PNG from Processing.]");
+/* average brightness inside a circle (radius r) */
+function avgBrightnessCircle(cx,cy,r){
+  let sum=0,count=0;
+  const r2 = r*r;
+  const x0 = Math.max(0, Math.floor(cx-r));
+  const x1 = Math.min(canvas.width-1, Math.ceil(cx+r));
+  const y0 = Math.max(0, Math.floor(cy-r));
+  const y1 = Math.min(canvas.height-1, Math.ceil(cy+r));
+  for(let y=y0;y<=y1;y++){
+    for(let x=x0;x<=x1;x++){
+      const dx = x-cx, dy = y-cy;
+      if(dx*dx + dy*dy <= r2){
+        sum += brightnessAt(x,y); count++;
+      }
+    }
+  }
+  return count? sum/count : 255;
+}
+
+/* Estimate background brightness (sample four corners) */
+function estimateBackground(){
+  const p = Math.max(6, Math.floor(Math.min(canvas.width, canvas.height)*0.02));
+  const corners = [
+    avgBrightnessRect(p,p,4),
+    avgBrightnessRect(canvas.width-p,p,4),
+    avgBrightnessRect(p,canvas.height-p,4),
+    avgBrightnessRect(canvas.width-p,canvas.height-p,4)
+  ];
+  return corners.reduce((a,b)=>a+b,0)/corners.length;
+}
+
+/* Detect vertical grid lines: returns array of x positions (centers of 1px black lines) */
+function detectVerticalLines(){
+  const w = canvas.width, h = canvas.height;
+  const samples = Math.max(20, Math.min(SAMPLE_ROWS, Math.floor(h/6)));
+  let ys = Array.from({length:samples}, (_,i) => Math.round(i*(h-1)/(samples-1)));
+  // compute darkness score per column (higher means darker)
+  const scores = new Float32Array(w);
+  let maxScore = 0;
+  for(let x=0;x<w;x++){
+    let acc = 0;
+    for(let j=0;j<ys.length;j++){
+      const b = brightnessAt(x, ys[j]);
+      acc += (255 - b);
+    }
+    scores[x] = acc / ys.length; // avg darkness 0..255
+    if(scores[x] > maxScore) maxScore = scores[x];
+  }
+  if(maxScore < 6) return []; // image too light => probably no grid
+
+  // threshold adaptive
+  const thr = Math.max(6, maxScore * (GRID_LINE_DARKNESS_THRESH)); // absolute
+  // compress contiguous peaks
+  const lines = [];
+  let i=0;
+  while(i < w){
+    if(scores[i] >= thr){
+      let start = i;
+      let weightSum = scores[i]; let posWeighted = i * scores[i];
+      i++;
+      while(i<w && scores[i] >= thr){
+        weightSum += scores[i];
+        posWeighted += i * scores[i];
+        i++;
+      }
+      const center = Math.round(posWeighted / weightSum);
+      // optionally filter very narrow spikes (anti-alias)
+      if(i - start >= MIN_GROUP_WIDTH) lines.push(center);
+    } else i++;
+  }
+  // sometimes we detect the outer border twice; make unique sorted
+  return Array.from(new Set(lines)).sort((a,b)=>a-b);
+}
+
+/* Detect horizontal grid lines */
+function detectHorizontalLines(){
+  const w = canvas.width, h = canvas.height;
+  const samples = Math.max(20, Math.min(SAMPLE_COLS, Math.floor(w/6)));
+  let xs = Array.from({length:samples}, (_,i) => Math.round(i*(w-1)/(samples-1)));
+  const scores = new Float32Array(h);
+  let maxScore = 0;
+  for(let y=0;y<h;y++){
+    let acc = 0;
+    for(let j=0;j<xs.length;j++){
+      const b = brightnessAt(xs[j], y);
+      acc += (255 - b);
+    }
+    scores[y] = acc / xs.length;
+    if(scores[y] > maxScore) maxScore = scores[y];
+  }
+  if(maxScore < 6) return [];
+  const thr = Math.max(6, maxScore * (GRID_LINE_DARKNESS_THRESH));
+  const lines = [];
+  let i=0;
+  while(i < h){
+    if(scores[i] >= thr){
+      let start = i;
+      let weightSum = scores[i]; let posWeighted = i * scores[i];
+      i++;
+      while(i<h && scores[i] >= thr){
+        weightSum += scores[i];
+        posWeighted += i * scores[i];
+        i++;
+      }
+      const center = Math.round(posWeighted / weightSum);
+      if(i - start >= MIN_GROUP_WIDTH) lines.push(center);
+    } else i++;
+  }
+  return Array.from(new Set(lines)).sort((a,b)=>a-b);
+}
+
+/* Main decode flow */
+function decodeAutoGrid(){
+  // ensure pixel data present
+  if(!lastImageData) { showModal("[No image data]"); return; }
+
+  const bg = estimateBackground();
+
+  const vLines = detectVerticalLines();
+  const hLines = detectHorizontalLines();
+
+  // debug store
+  debugOverlay.vLines = vLines;
+  debugOverlay.hLines = hLines;
+  debugOverlay.centers = [];
+
+  if(vLines.length < 2 || hLines.length < 2){
+    showModal("[Grid not detected] Try exporting a crisp PNG (no heavy compression).");
+    drawDebugOverlay(); 
     return;
   }
 
-  // 3) Use consecutive line gaps as cells
+  // compute cells
   const cols = vLines.length - 1;
   const rows = hLines.length - 1;
 
-  // 4) Build bits by sampling each cell center
-  const DIFF_THRESHOLD = 18; // center vs background delta to consider "filled"
-  let bits = [];
+  // compute sample radius for circle center (fraction of cell)
+  const cellW = Math.min(...vLines.slice(1).map((v,i)=>v - vLines[i]));
+  const cellH = Math.min(...hLines.slice(1).map((v,i)=>v - hLines[i]));
+  const cellSize = Math.min(cellW, cellH);
+  const sampleRadius = Math.max(3, Math.floor(cellSize * CENTER_SAMPLE_RADIUS_RATIO));
+
+  const bits = [];
   for(let r=0;r<rows;r++){
-    const y = Math.round((hLines[r] + hLines[r+1]) / 2);
     for(let c=0;c<cols;c++){
-      const x = Math.round((vLines[c] + vLines[c+1]) / 2);
-      const centerB = avgBrightnessAround(x, y, 3); // small 3x3 patch
-      const bit = (Math.abs(centerB - bg) > DIFF_THRESHOLD) ? 1 : 0;
-      bits.push(bit);
+      const left = vLines[c], right = vLines[c+1];
+      const top = hLines[r], bottom = hLines[r+1];
+      const cx = (left + right) / 2;
+      const cy = (top + bottom) / 2;
+      // average brightness within small circle
+      const centerAvg = avgBrightnessCircle(cx, cy, sampleRadius);
+      // if center significantly darker than background -> filled
+      const isFilled = (bg - centerAvg) > FILL_BRIGHTNESS_DELTA || (centerAvg < bg * 0.95);
+      bits.push(isFilled?1:0);
+      debugOverlay.centers.push({x:cx,y:cy,bit:isFilled});
     }
   }
 
-  // 5) Convert bits -> bytes
-  let bytes = [];
+  // convert bits -> bytes
+  const bytes = [];
   for(let i=0;i<bits.length;i+=8){
     if(i+8 <= bits.length){
       let val = 0;
@@ -137,101 +314,64 @@ function decodeImage(img){
       bytes.push(val);
     }
   }
-
-  // Trim trailing nulls (padding from empty cells)
+  // trim trailing zero bytes likely from empty padded cells
   while(bytes.length && bytes[bytes.length-1] === 0) bytes.pop();
 
-  // 6) Bytes -> text (basic ASCII/UTF-8-safe for <= 255 from Processing)
-  const text = bytes.map(b => String.fromCharCode(b)).join('');
-
-  show(text || "[Could not decode]");
-}
-
-// --- Helpers ---
-function brightnessAt(x,y){
-  const d = ctx.getImageData(x,y,1,1).data;
-  return (d[0] + d[1] + d[2]) / 3;
-}
-function avgBrightnessAround(x,y,halfWin){
-  let sum=0, count=0;
-  for(let dy=-halfWin; dy<=halfWin; dy++){
-    for(let dx=-halfWin; dx<=halfWin; dx++){
-      const xx = Math.max(0, Math.min(canvas.width-1, x+dx));
-      const yy = Math.max(0, Math.min(canvas.height-1, y+dy));
-      const d = ctx.getImageData(xx,yy,1,1).data;
-      sum += (d[0]+d[1]+d[2])/3; count++;
+  // decode UTF-8
+  let text = "";
+  if(bytes.length === 0){
+    text = "[No data decoded]";
+  } else {
+    try {
+      const u8 = new Uint8Array(bytes);
+      text = new TextDecoder('utf-8', {fatal:false}).decode(u8);
+    } catch(e){
+      text = "[Decoding error]";
+      console.error(e);
     }
   }
-  return sum / count;
-}
-function estimateBackgroundBrightness(){
-  const p = 6; // sample padding
-  const pts = [
-    [p,p], [canvas.width-p,p], [p,canvas.height-p], [canvas.width-p,canvas.height-p]
-  ];
-  let sum=0;
-  pts.forEach(([x,y])=> sum += brightnessAt(x,y));
-  return sum/pts.length;
+
+  showModal(text);
+  drawDebugOverlay();
 }
 
-function detectGridLinesVertical(w,h){
-  // Sample many rows per x and count how often it's "dark"
-  const SAMPLES = Math.max(30, Math.floor(h/20));
-  const DARK = 70; // brightness threshold for grid line (#050505)
-  const ys = new Array(SAMPLES).fill(0).map((_,i)=> Math.round(i*(h-1)/(SAMPLES-1)));
-
-  const score = new Array(w).fill(0);
-  for(let x=0; x<w; x++){
-    let darkCount=0;
-    for(let i=0;i<ys.length;i++){
-      const y = ys[i];
-      const b = brightnessAt(x,y);
-      if (b < DARK) darkCount++;
-    }
-    score[x] = darkCount / SAMPLES; // 0..1
-  }
-  return compressPeaks(score, 0.5); // keep columns with >50% dark hits
+/* draw debug overlay on canvas */
+function drawDebugOverlay(){
+  if(!lastImageData) return;
+  // redraw image first
+  ctx.putImageData(lastImageData, 0, 0);
+  if(!debug) return;
+  ctx.save();
+  // draw v/h lines
+  ctx.strokeStyle = 'rgba(200,40,40,0.95)';
+  ctx.lineWidth = 1;
+  debugOverlay.vLines.forEach(x => {
+    ctx.beginPath(); ctx.moveTo(x+0.5,0); ctx.lineTo(x+0.5,canvas.height); ctx.stroke();
+  });
+  debugOverlay.hLines.forEach(y => {
+    ctx.beginPath(); ctx.moveTo(0,y+0.5); ctx.lineTo(canvas.width,y+0.5); ctx.stroke();
+  });
+  // centers & bits
+  debugOverlay.centers.forEach((c,i) => {
+    ctx.beginPath();
+    ctx.fillStyle = c.bit ? 'rgba(20,140,240,0.85)' : 'rgba(255,255,255,0.9)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.arc(c.x, c.y, Math.max(4, Math.min(10, Math.floor(Math.min(canvas.width,canvas.height)*0.01))), 0, Math.PI*2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = c.bit ? '#fff' : '#222';
+    ctx.font = '10px monospace';
+    ctx.fillText(c.bit ? '1' : '0', c.x-4, c.y+4);
+  });
+  ctx.restore();
 }
 
-function detectGridLinesHorizontal(w,h){
-  const SAMPLES = Math.max(30, Math.floor(w/20));
-  const DARK = 70;
-  const xs = new Array(SAMPLES).fill(0).map((_,i)=> Math.round(i*(w-1)/(SAMPLES-1)));
-
-  const score = new Array(h).fill(0);
-  for(let y=0; y<h; y++){
-    let darkCount=0;
-    for(let i=0;i<xs.length;i++){
-      const x = xs[i];
-      const b = brightnessAt(x,y);
-      if (b < DARK) darkCount++;
-    }
-    score[y] = darkCount / SAMPLES;
-  }
-  return compressPeaks(score, 0.5);
-}
-
-function compressPeaks(scoreArr, thr){
-  // Group contiguous indices above threshold, return their centers
-  const out = [];
-  let i=0;
-  while(i < scoreArr.length){
-    if(scoreArr[i] >= thr){
-      let start=i;
-      while(i < scoreArr.length && scoreArr[i] >= thr) i++;
-      let end=i-1;
-      out.push(Math.round((start+end)/2));
-    }else{
-      i++;
-    }
-  }
-  return out;
-}
-
-function show(msg){
-  decodedTextDiv.textContent = msg;
+/* modal utility */
+function showModal(text){
+  decodedTextDiv.textContent = text;
   modal.style.display = 'flex';
 }
+
+/* initial: none */
 </script>
 </body>
 </html>
