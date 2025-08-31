@@ -1,377 +1,310 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>Binary Whisper Decoder — auto grid</title>
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta charset="UTF-8">
+<title>Binary Whisper Decoder</title>
 <style>
-:root { --bg:#ffffff; --grid:#050505; --accent:#f0a83a; }
-html,body { height:100%; margin:0; }
-body {
-  display:flex; align-items:center; justify-content:center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  background: var(--bg);
-  background-image:
-    linear-gradient(to right, var(--grid) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
-  background-size: 40px 40px;
-}
-.container { text-align:center; padding:1rem; }
-#dropzone {
-  display:inline-block; padding:1.1rem 2.6rem; border-radius:28px;
-  background:#050505; color:#fff; cursor:pointer; user-select:none;
-  transition: .18s background;
-}
-#dropzone:hover { background:#222; }
-#canvas { display:block; margin: 1rem auto; max-width: 90vw; border-radius:6px; box-shadow:0 6px 18px rgba(0,0,0,.08); }
-#controls { margin-top:.6rem; color:#222; font-size:.9rem; }
-#debugHint { color:#666; font-size:.8rem; margin-top:.25rem; }
-
-#modal {
-  position:fixed; inset:0; display:none; align-items:center; justify-content:center;
-  background: rgba(0,0,0,.65); z-index:9999;
-}
-#modalCard {
-  background:#fff; color:#050505; padding:1.25rem; border-radius:12px; width:min(92vw,720px);
-  font-family:inherit; white-space:pre-wrap; text-align:left;
-}
-#closeBtn {
-  margin-top:.8rem; background:#050505; color:#fff; border:0; padding:.45rem .9rem; border-radius:.45rem; cursor:pointer;
-}
-.badge { display:inline-block; background:var(--accent); color:#050505; padding:.15rem .5rem; border-radius:.45rem; margin-left:.6rem; font-weight:600; }
+  body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: white;
+    background-image: 
+      linear-gradient(to right, #050505 1px, transparent 1px),
+      linear-gradient(to bottom, #050505 1px, transparent 1px);
+    background-size: 40px 40px;
+    font-family: monospace;
+  }
+  
+  #status {
+    margin-bottom: 20px;
+    padding: 10px 20px;
+    background: #f0f0f0;
+    border-radius: 5px;
+    font-size: 14px;
+  }
+  
+  #dropzone {
+    background: #050505;
+    color: white;
+    padding: 1.2em 3em;
+    border-radius: 2em;
+    font-size: 1.2em;
+    cursor: pointer;
+    transition: background 0.3s;
+  }
+  
+  #dropzone:hover { background: #222; }
+  #dropzone.disabled { 
+    background: #666; 
+    cursor: not-allowed; 
+  }
+  
+  #canvas { display: none; }
+  
+  #modal {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    justify-content: center;
+    align-items: center;
+  }
+  
+  #modalContent {
+    background: #fff;
+    color: #050505;
+    padding: 2em;
+    border-radius: 1em;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+    font-family: monospace;
+    white-space: pre-wrap;
+    text-align: left;
+  }
+  
+  #closeBtn {
+    margin-top: 1em;
+    padding: 0.5em 1.5em;
+    border: none;
+    border-radius: 0.5em;
+    background: #050505;
+    color: white;
+    font-family: monospace;
+    cursor: pointer;
+  }
+  
+  .debug-info {
+    font-size: 12px;
+    color: #666;
+    margin-top: 10px;
+  }
 </style>
 </head>
 <body>
-<div class="container">
-  <div id="dropzone">drop your whisper here <span class="badge">auto grid</span></div>
-  <canvas id="canvas" width="800" height="800" style="display:none;"></canvas>
-  <div id="controls">Press <strong>D</strong> to toggle debug overlay. The decoder auto-detects grid lines and cell size.</div>
-  <div id="debugHint">(If detection fails, try exporting an uncompressed PNG from Processing)</div>
-</div>
 
-<!-- modal -->
-<div id="modal" aria-hidden="true">
-  <div id="modalCard">
+<div id="status">Loading OpenCV.js...</div>
+<div id="dropzone" class="disabled">drop your whisper here</div>
+<canvas id="canvas"></canvas>
+
+<div id="modal">
+  <div id="modalContent">
     <div id="decodedText"></div>
+    <div id="debugInfo" class="debug-info"></div>
     <button id="closeBtn">close</button>
   </div>
 </div>
 
 <script>
-/* ===== CONFIG (tweak these if needed) ===== */
-const GRID_LINE_DARKNESS_THRESH = 0.18; // fraction of max darkness to pick as line peaks (0..1)
-const GRID_LINE_MIN_FRACTION = 0.12;    // minimum fraction of sampled pixels that must be dark to consider a true line
-const SAMPLE_ROWS = 60;                 // how many rows to sample when scanning vertical lines
-const SAMPLE_COLS = 60;                 // how many columns to sample when scanning horizontal lines
-const CENTER_SAMPLE_RADIUS_RATIO = 0.32; // fraction of cell size to sample for center (0..0.5)
-const FILL_BRIGHTNESS_DELTA = 18;      // absolute brightness diff to treat as filled (tweak if needed)
-const MIN_GROUP_WIDTH = 1;             // minimal width in px to treat as a grid line group
+let cvReady = false;
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const dropzone = document.getElementById("dropzone");
+const modal = document.getElementById("modal");
+const decodedTextDiv = document.getElementById("decodedText");
+const debugInfo = document.getElementById("debugInfo");
+const closeBtn = document.getElementById("closeBtn");
+const status = document.getElementById("status");
 
-/* ===== DOM ===== */
-const dropzone = document.getElementById('dropzone');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d', { willReadFrequently: true });
-const modal = document.getElementById('modal');
-const decodedTextDiv = document.getElementById('decodedText');
-const closeBtn = document.getElementById('closeBtn');
+// Wait for OpenCV to load
+function onOpenCvReady() {
+  cvReady = true;
+  status.textContent = "Ready to decode whispers!";
+  dropzone.classList.remove("disabled");
+  console.log("OpenCV.js loaded successfully");
+}
 
-let lastImageData = null;
-let debug = false;
-let debugOverlay = { vLines:[], hLines:[], centers:[] };
+// Check if OpenCV is already loaded, otherwise wait
+if (typeof cv !== 'undefined') {
+  onOpenCvReady();
+} else {
+  // Set up the callback for when OpenCV loads
+  window.Module = {
+    onRuntimeInitialized: onOpenCvReady
+  };
+}
 
-/* Prevent default nav on drop outside */
-['dragenter','dragover','dragleave','drop'].forEach(ev=>{
-  document.addEventListener(ev, e=>{ e.preventDefault(); }, { passive:false });
+// Prevent browser from hijacking drops
+["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
+  document.addEventListener(eventName, e => e.preventDefault(), false);
 });
 
-/* Drop + click handlers */
-dropzone.addEventListener('click', () => {
-  const input = document.createElement('input');
-  input.type='file'; input.accept='image/*';
+// Dropzone events
+dropzone.addEventListener("dragover", e => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (cvReady) dropzone.style.background = "#333";
+});
+
+dropzone.addEventListener("dragleave", e => {
+  e.preventDefault();
+  e.stopPropagation();
+  dropzone.style.background = "#050505";
+});
+
+dropzone.addEventListener("drop", e => {
+  e.preventDefault();
+  e.stopPropagation();
+  dropzone.style.background = "#050505";
+  if (cvReady) handleFile(e.dataTransfer.files[0]);
+});
+
+dropzone.addEventListener("click", () => {
+  if (!cvReady) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
   input.onchange = e => handleFile(e.target.files[0]);
   input.click();
 });
-dropzone.addEventListener('dragover', e=>{ e.preventDefault(); dropzone.style.background='#333'; });
-dropzone.addEventListener('dragleave', e=>{ dropzone.style.background='#050505'; });
-dropzone.addEventListener('drop', e=>{
-  e.preventDefault(); e.stopPropagation(); dropzone.style.background='#050505';
-  const f = e.dataTransfer.files[0]; handleFile(f);
-});
 
-/* keyboard: toggle debug */
-document.addEventListener('keydown', e=>{
-  if(e.key === 'd' || e.key === 'D'){ debug = !debug; drawDebugOverlay(); }
-});
-
-/* close modal */
-closeBtn.addEventListener('click', ()=> modal.style.display='none');
-
-/* main file handling */
-function handleFile(file){
-  if(!file) return;
+function handleFile(file) {
+  if (!file || !cvReady) return;
+  
+  status.textContent = "Processing image...";
+  
   const img = new Image();
-  img.onload = ()=>{
-    canvas.width = img.width; canvas.height = img.height;
-    canvas.style.display = 'block';
-    ctx.drawImage(img,0,0);
-    // cache pixel buffer for fast access
-    lastImageData = ctx.getImageData(0,0,canvas.width, canvas.height);
-    try {
-      decodeAutoGrid();
-    } catch(err) {
-      console.error(err);
-      showModal("[Decoder error] " + err.message);
-    }
+  img.onload = () => {
+    canvas.width = img.width;
+    canvas.height = img.height;
+    ctx.drawImage(img, 0, 0);
+    
+    setTimeout(() => {
+      try {
+        decodeImage();
+      } catch (error) {
+        console.error("Decoding error:", error);
+        showResult("[Error during decoding: " + error.message + "]", "");
+      }
+    }, 100);
   };
+  
+  img.onerror = () => {
+    status.textContent = "Error loading image";
+  };
+  
   img.src = URL.createObjectURL(file);
 }
 
-/* utility to get brightness from cached image buffer */
-function brightnessAt(x,y){
-  x = Math.max(0, Math.min(canvas.width-1, Math.round(x)));
-  y = Math.max(0, Math.min(canvas.height-1, Math.round(y)));
-  const d = lastImageData.data;
-  const i = (y * canvas.width + x) * 4;
-  return (d[i] + d[i+1] + d[i+2]) / 3; // 0..255
-}
-
-/* average brightness in small square */
-function avgBrightnessRect(cx,cy,half){
-  let sum=0, count=0;
-  for(let yy = Math.round(cy-half); yy<=Math.round(cy+half); yy++){
-    for(let xx = Math.round(cx-half); xx<=Math.round(cx+half); xx++){
-      if(xx<0 || xx>=canvas.width || yy<0 || yy>=canvas.height) continue;
-      sum += brightnessAt(xx,yy); count++;
+function decodeImage() {
+  let src = cv.imread(canvas);
+  let gray = new cv.Mat();
+  
+  try {
+    // Convert to grayscale
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+    
+    // Apply slight blur to reduce noise
+    cv.medianBlur(gray, gray, 3);
+    
+    // Detect circles with more relaxed parameters
+    let circles = new cv.Mat();
+    cv.HoughCircles(
+      gray, circles, cv.HOUGH_GRADIENT, 
+      1,     // dp
+      15,    // minDist (reduced from 20)
+      80,    // param1 (reduced from 100)
+      25,    // param2 (reduced from 30)
+      5,     // minRadius (reduced from 10)
+      100    // maxRadius (increased from 60)
+    );
+    
+    let debugText = `Image size: ${canvas.width}x${canvas.height}\n`;
+    debugText += `Circles detected: ${circles.cols}\n`;
+    
+    if (circles.cols === 0) {
+      showResult("[No circles detected - try adjusting the image contrast]", debugText);
+      return;
     }
-  }
-  return count? sum/count : 255;
-}
-
-/* average brightness inside a circle (radius r) */
-function avgBrightnessCircle(cx,cy,r){
-  let sum=0,count=0;
-  const r2 = r*r;
-  const x0 = Math.max(0, Math.floor(cx-r));
-  const x1 = Math.min(canvas.width-1, Math.ceil(cx+r));
-  const y0 = Math.max(0, Math.floor(cy-r));
-  const y1 = Math.min(canvas.height-1, Math.ceil(cy+r));
-  for(let y=y0;y<=y1;y++){
-    for(let x=x0;x<=x1;x++){
-      const dx = x-cx, dy = y-cy;
-      if(dx*dx + dy*dy <= r2){
-        sum += brightnessAt(x,y); count++;
+    
+    // Extract circle data
+    let circleData = [];
+    for (let i = 0; i < circles.cols; i++) {
+      let x = Math.round(circles.data32F[i * 3]);
+      let y = Math.round(circles.data32F[i * 3 + 1]);
+      let r = Math.round(circles.data32F[i * 3 + 2]);
+      
+      // Create mask for this circle
+      let mask = cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8UC1);
+      cv.circle(mask, new cv.Point(x, y), Math.max(r-2, 1), new cv.Scalar(255), -1);
+      
+      // Calculate mean brightness inside circle
+      let mean = cv.mean(gray, mask)[0];
+      let bit = (mean < 128) ? "1" : "0";
+      
+      circleData.push({x, y, r, mean: Math.round(mean), bit});
+      mask.delete();
+    }
+    
+    // Sort circles: top to bottom, then left to right
+    circleData.sort((a, b) => {
+      const rowTolerance = 20; // pixels tolerance for same row
+      if (Math.abs(a.y - b.y) > rowTolerance) {
+        return a.y - b.y;
+      }
+      return a.x - b.x;
+    });
+    
+    // Build binary string
+    let binaryString = circleData.map(c => c.bit).join("");
+    debugText += `Binary length: ${binaryString.length}\n`;
+    debugText += `Binary: ${binaryString}\n\n`;
+    
+    // Convert binary to text
+    let text = "";
+    let validBytes = 0;
+    for (let i = 0; i < binaryString.length; i += 8) {
+      let byte = binaryString.substr(i, 8);
+      if (byte.length === 8) {
+        let charCode = parseInt(byte, 2);
+        if (charCode >= 32 && charCode <= 126) { // printable ASCII
+          text += String.fromCharCode(charCode);
+          validBytes++;
+        } else if (charCode === 10 || charCode === 13) { // newlines
+          text += String.fromCharCode(charCode);
+          validBytes++;
+        } else {
+          text += "�"; // replacement character for invalid bytes
+        }
       }
     }
+    
+    debugText += `Valid bytes decoded: ${validBytes}\n`;
+    debugText += `Circle details:\n`;
+    circleData.forEach((c, i) => {
+      debugText += `${i+1}: (${c.x},${c.y}) r=${c.r} mean=${c.mean} bit=${c.bit}\n`;
+    });
+    
+    showResult(text || "[Could not decode meaningful text]", debugText);
+    
+  } finally {
+    // Clean up
+    src.delete();
+    gray.delete();
+    if (typeof circles !== 'undefined') circles.delete();
+    status.textContent = "Ready to decode whispers!";
   }
-  return count? sum/count : 255;
 }
 
-/* Estimate background brightness (sample four corners) */
-function estimateBackground(){
-  const p = Math.max(6, Math.floor(Math.min(canvas.width, canvas.height)*0.02));
-  const corners = [
-    avgBrightnessRect(p,p,4),
-    avgBrightnessRect(canvas.width-p,p,4),
-    avgBrightnessRect(p,canvas.height-p,4),
-    avgBrightnessRect(canvas.width-p,canvas.height-p,4)
-  ];
-  return corners.reduce((a,b)=>a+b,0)/corners.length;
-}
-
-/* Detect vertical grid lines: returns array of x positions (centers of 1px black lines) */
-function detectVerticalLines(){
-  const w = canvas.width, h = canvas.height;
-  const samples = Math.max(20, Math.min(SAMPLE_ROWS, Math.floor(h/6)));
-  let ys = Array.from({length:samples}, (_,i) => Math.round(i*(h-1)/(samples-1)));
-  // compute darkness score per column (higher means darker)
-  const scores = new Float32Array(w);
-  let maxScore = 0;
-  for(let x=0;x<w;x++){
-    let acc = 0;
-    for(let j=0;j<ys.length;j++){
-      const b = brightnessAt(x, ys[j]);
-      acc += (255 - b);
-    }
-    scores[x] = acc / ys.length; // avg darkness 0..255
-    if(scores[x] > maxScore) maxScore = scores[x];
-  }
-  if(maxScore < 6) return []; // image too light => probably no grid
-
-  // threshold adaptive
-  const thr = Math.max(6, maxScore * (GRID_LINE_DARKNESS_THRESH)); // absolute
-  // compress contiguous peaks
-  const lines = [];
-  let i=0;
-  while(i < w){
-    if(scores[i] >= thr){
-      let start = i;
-      let weightSum = scores[i]; let posWeighted = i * scores[i];
-      i++;
-      while(i<w && scores[i] >= thr){
-        weightSum += scores[i];
-        posWeighted += i * scores[i];
-        i++;
-      }
-      const center = Math.round(posWeighted / weightSum);
-      // optionally filter very narrow spikes (anti-alias)
-      if(i - start >= MIN_GROUP_WIDTH) lines.push(center);
-    } else i++;
-  }
-  // sometimes we detect the outer border twice; make unique sorted
-  return Array.from(new Set(lines)).sort((a,b)=>a-b);
-}
-
-/* Detect horizontal grid lines */
-function detectHorizontalLines(){
-  const w = canvas.width, h = canvas.height;
-  const samples = Math.max(20, Math.min(SAMPLE_COLS, Math.floor(w/6)));
-  let xs = Array.from({length:samples}, (_,i) => Math.round(i*(w-1)/(samples-1)));
-  const scores = new Float32Array(h);
-  let maxScore = 0;
-  for(let y=0;y<h;y++){
-    let acc = 0;
-    for(let j=0;j<xs.length;j++){
-      const b = brightnessAt(xs[j], y);
-      acc += (255 - b);
-    }
-    scores[y] = acc / xs.length;
-    if(scores[y] > maxScore) maxScore = scores[y];
-  }
-  if(maxScore < 6) return [];
-  const thr = Math.max(6, maxScore * (GRID_LINE_DARKNESS_THRESH));
-  const lines = [];
-  let i=0;
-  while(i < h){
-    if(scores[i] >= thr){
-      let start = i;
-      let weightSum = scores[i]; let posWeighted = i * scores[i];
-      i++;
-      while(i<h && scores[i] >= thr){
-        weightSum += scores[i];
-        posWeighted += i * scores[i];
-        i++;
-      }
-      const center = Math.round(posWeighted / weightSum);
-      if(i - start >= MIN_GROUP_WIDTH) lines.push(center);
-    } else i++;
-  }
-  return Array.from(new Set(lines)).sort((a,b)=>a-b);
-}
-
-/* Main decode flow */
-function decodeAutoGrid(){
-  // ensure pixel data present
-  if(!lastImageData) { showModal("[No image data]"); return; }
-
-  const bg = estimateBackground();
-
-  const vLines = detectVerticalLines();
-  const hLines = detectHorizontalLines();
-
-  // debug store
-  debugOverlay.vLines = vLines;
-  debugOverlay.hLines = hLines;
-  debugOverlay.centers = [];
-
-  if(vLines.length < 2 || hLines.length < 2){
-    showModal("[Grid not detected] Try exporting a crisp PNG (no heavy compression).");
-    drawDebugOverlay(); 
-    return;
-  }
-
-  // compute cells
-  const cols = vLines.length - 1;
-  const rows = hLines.length - 1;
-
-  // compute sample radius for circle center (fraction of cell)
-  const cellW = Math.min(...vLines.slice(1).map((v,i)=>v - vLines[i]));
-  const cellH = Math.min(...hLines.slice(1).map((v,i)=>v - hLines[i]));
-  const cellSize = Math.min(cellW, cellH);
-  const sampleRadius = Math.max(3, Math.floor(cellSize * CENTER_SAMPLE_RADIUS_RATIO));
-
-  const bits = [];
-  for(let r=0;r<rows;r++){
-    for(let c=0;c<cols;c++){
-      const left = vLines[c], right = vLines[c+1];
-      const top = hLines[r], bottom = hLines[r+1];
-      const cx = (left + right) / 2;
-      const cy = (top + bottom) / 2;
-      // average brightness within small circle
-      const centerAvg = avgBrightnessCircle(cx, cy, sampleRadius);
-      // if center significantly darker than background -> filled
-      const isFilled = (bg - centerAvg) > FILL_BRIGHTNESS_DELTA || (centerAvg < bg * 0.95);
-      bits.push(isFilled?1:0);
-      debugOverlay.centers.push({x:cx,y:cy,bit:isFilled});
-    }
-  }
-
-  // convert bits -> bytes
-  const bytes = [];
-  for(let i=0;i<bits.length;i+=8){
-    if(i+8 <= bits.length){
-      let val = 0;
-      for(let k=0;k<8;k++) val = (val<<1) | bits[i+k];
-      bytes.push(val);
-    }
-  }
-  // trim trailing zero bytes likely from empty padded cells
-  while(bytes.length && bytes[bytes.length-1] === 0) bytes.pop();
-
-  // decode UTF-8
-  let text = "";
-  if(bytes.length === 0){
-    text = "[No data decoded]";
-  } else {
-    try {
-      const u8 = new Uint8Array(bytes);
-      text = new TextDecoder('utf-8', {fatal:false}).decode(u8);
-    } catch(e){
-      text = "[Decoding error]";
-      console.error(e);
-    }
-  }
-
-  showModal(text);
-  drawDebugOverlay();
-}
-
-/* draw debug overlay on canvas */
-function drawDebugOverlay(){
-  if(!lastImageData) return;
-  // redraw image first
-  ctx.putImageData(lastImageData, 0, 0);
-  if(!debug) return;
-  ctx.save();
-  // draw v/h lines
-  ctx.strokeStyle = 'rgba(200,40,40,0.95)';
-  ctx.lineWidth = 1;
-  debugOverlay.vLines.forEach(x => {
-    ctx.beginPath(); ctx.moveTo(x+0.5,0); ctx.lineTo(x+0.5,canvas.height); ctx.stroke();
-  });
-  debugOverlay.hLines.forEach(y => {
-    ctx.beginPath(); ctx.moveTo(0,y+0.5); ctx.lineTo(canvas.width,y+0.5); ctx.stroke();
-  });
-  // centers & bits
-  debugOverlay.centers.forEach((c,i) => {
-    ctx.beginPath();
-    ctx.fillStyle = c.bit ? 'rgba(20,140,240,0.85)' : 'rgba(255,255,255,0.9)';
-    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-    ctx.arc(c.x, c.y, Math.max(4, Math.min(10, Math.floor(Math.min(canvas.width,canvas.height)*0.01))), 0, Math.PI*2);
-    ctx.fill(); ctx.stroke();
-    ctx.fillStyle = c.bit ? '#fff' : '#222';
-    ctx.font = '10px monospace';
-    ctx.fillText(c.bit ? '1' : '0', c.x-4, c.y+4);
-  });
-  ctx.restore();
-}
-
-/* modal utility */
-function showModal(text){
+function showResult(text, debug) {
   decodedTextDiv.textContent = text;
-  modal.style.display = 'flex';
+  debugInfo.textContent = debug;
+  modal.style.display = "flex";
 }
 
-/* initial: none */
+closeBtn.addEventListener("click", () => {
+  modal.style.display = "none";
+});
+
+// Handle window drops
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => e.preventDefault());
 </script>
+
 </body>
 </html>
