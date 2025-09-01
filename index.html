@@ -41,6 +41,7 @@
     display: none;
     justify-content: center;
     align-items: center;
+    z-index: 1000;
   }
   
   #modalContent {
@@ -80,6 +81,16 @@
     padding: 1em;
     border-radius: 0.5em;
   }
+
+  .decoded-message {
+    font-size: 16px;
+    font-weight: bold;
+    color: #0066cc;
+    background: #f0f8ff;
+    padding: 1em;
+    border-radius: 0.5em;
+    border: 2px solid #0066cc;
+  }
 </style>
 </head>
 <body>
@@ -91,7 +102,7 @@
   <div id="modalContent">
     <div class="result-section">
       <h3>Decoded Message:</h3>
-      <div id="decodedText"></div>
+      <div id="decodedText" class="decoded-message"></div>
     </div>
     <div class="result-section debug-info">
       <h4>Debug Info:</h4>
@@ -109,6 +120,9 @@ const modal = document.getElementById("modal");
 const decodedTextDiv = document.getElementById("decodedText");
 const debugInfo = document.getElementById("debugInfo");
 const closeBtn = document.getElementById("closeBtn");
+
+let bestScore = 0;
+let bestResult = null;
 
 // Prevent browser default drag behavior
 ["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
@@ -133,7 +147,6 @@ dropzone.addEventListener("drop", e => {
   e.stopPropagation();
   dropzone.style.background = "#050505";
   console.log("Drop event triggered");
-  console.log("Files:", e.dataTransfer.files);
   handleFile(e.dataTransfer.files[0]);
 });
 
@@ -143,7 +156,6 @@ dropzone.addEventListener("click", () => {
   input.type = "file";
   input.accept = "image/*";
   input.onchange = e => {
-    console.log("File input changed");
     handleFile(e.target.files[0]);
   };
   input.click();
@@ -151,49 +163,33 @@ dropzone.addEventListener("click", () => {
 
 function handleFile(file) {
   console.log("=== HANDLE FILE START ===");
-  console.log("File object:", file);
   
   if (!file) {
-    console.log("No file provided");
     showResult("[No file]", "No file was provided");
     return;
   }
   
-  console.log("File name:", file.name);
-  console.log("File size:", file.size);
-  console.log("File type:", file.type);
-  
-  // Check if it's an image
   if (!file.type.startsWith('image/')) {
-    console.log("Not an image file");
     showResult("[Not an image]", `File type: ${file.type}\nPlease upload an image file.`);
     return;
   }
   
-  // Use FileReader for better compatibility
   const reader = new FileReader();
   
   reader.onload = function(e) {
-    console.log("FileReader onload triggered");
-    console.log("Result length:", e.target.result.length);
-    
     const img = new Image();
     
     img.onload = function() {
-      console.log("Image onload triggered");
-      console.log("Image dimensions:", this.width, "x", this.height);
+      console.log("Image loaded:", this.width, "x", this.height);
       
       try {
         canvas.width = this.width;
         canvas.height = this.height;
         ctx.drawImage(this, 0, 0);
-        console.log("Image drawn to canvas successfully");
         
-        // Immediate test
         setTimeout(() => {
-          console.log("=== STARTING DECODE ===");
           decodeGrid();
-        }, 50);
+        }, 100);
         
       } catch (error) {
         console.error("Canvas error:", error);
@@ -202,12 +198,10 @@ function handleFile(file) {
     };
     
     img.onerror = function(error) {
-      console.error("Image load error from FileReader:", error);
-      console.error("Image src length:", this.src.length);
-      showResult("[Image load failed]", "Image could not be loaded from FileReader data");
+      console.error("Image load error:", error);
+      showResult("[Image load failed]", "Image could not be loaded");
     };
     
-    console.log("Setting image src...");
     img.src = e.target.result;
   };
   
@@ -216,27 +210,28 @@ function handleFile(file) {
     showResult("[File read error]", "Could not read file: " + error);
   };
   
-  console.log("Starting FileReader...");
   reader.readAsDataURL(file);
 }
 
 function decodeGrid() {
   console.log("=== DECODE GRID START ===");
   
+  bestScore = 0;
+  bestResult = null;
+  
   try {
-    console.log("Getting image data...");
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    console.log("Image data obtained, length:", imageData.data.length);
-    
     const data = imageData.data;
     let debugText = `Image: ${canvas.width}x${canvas.height}px\n`;
     
-    // Try different grid sizes (expanded range for larger grids)
-    for (let gridSize = 3; gridSize <= 60; gridSize++) {
+    // Try different grid sizes - expanded range for larger grids
+    let testedGrids = [];
+    for (let gridSize = 3; gridSize <= 80; gridSize++) {
       const cellWidth = canvas.width / gridSize;
       const cellHeight = canvas.height / gridSize;
       
-      if (cellWidth < 3 || cellHeight < 3) continue;
+      // Skip if cells are too small
+      if (cellWidth < 5 || cellHeight < 5) continue;
       
       const bits = [];
       let filledCells = 0;
@@ -247,30 +242,37 @@ function decodeGrid() {
           const centerX = Math.floor(col * cellWidth + cellWidth / 2);
           const centerY = Math.floor(row * cellHeight + cellHeight / 2);
           
-          // Sample a smaller area for larger grids
-          const sampleRadius = Math.max(2, Math.min(cellWidth, cellHeight) * 0.25);
-          const result = sampleAreaAdvanced(data, canvas.width, centerX, centerY, sampleRadius);
-          const bit = result.hasFilledCircle ? "1" : "0";
+          const sampleRadius = Math.min(cellWidth, cellHeight) * 0.3;
+          const result = sampleCell(data, canvas.width, canvas.height, centerX, centerY, sampleRadius);
+          const bit = result.isFilled ? "1" : "0";
           bits.push(bit);
           
           if (bit === "1") filledCells++;
           
-          if (gridSize === 5) { // Debug the 5x5 grid specifically
-            detectionDetails.push(`(${row},${col}): blue=${result.blueRatio.toFixed(3)} dark=${result.darkness.toFixed(3)} bit=${bit}`);
+          // Debug for smaller grids
+          if (gridSize <= 10) {
+            detectionDetails.push(`(${row},${col}): ${result.debug} -> ${bit}`);
           }
         }
       }
       
       const fillRatio = filledCells / (gridSize * gridSize);
+      testedGrids.push(`${gridSize}x${gridSize}: ${filledCells}/${gridSize*gridSize} (${(fillRatio*100).toFixed(1)}%)`);
       
-      // Test if this produces valid text
-      if (fillRatio > 0.05 && fillRatio < 0.95) {
-        const text = binaryToText(bits.join(""));
-        const score = text.length + (text.match(/[a-zA-Z]/g) || []).length * 2;
+      // Test if this produces valid text (reasonable fill ratio)
+      if (fillRatio > 0.02 && fillRatio < 0.98 && filledCells > 0) {
+        const binaryString = bits.join("");
+        const text = binaryToText(binaryString);
         
-        console.log(`Grid ${gridSize}x${gridSize}: fill=${fillRatio.toFixed(3)}, text="${text}", score=${score}`);
+        // Score based on text quality
+        const alphaCount = (text.match(/[a-zA-Z]/g) || []).length;
+        const spaceCount = (text.match(/\s/g) || []).length;
+        const printableCount = (text.match(/[\x20-\x7E]/g) || []).length;
+        const score = printableCount * 2 + alphaCount * 3 + spaceCount;
         
-        if (score > bestScore) {
+        console.log(`Grid ${gridSize}x${gridSize}: fill=${(fillRatio*100).toFixed(1)}% (${filledCells}/${gridSize*gridSize}), text="${text.substring(0, 30)}...", score=${score}`);
+        
+        if (score > bestScore && text.length > 0) {
           bestScore = score;
           bestResult = {
             gridSize,
@@ -279,7 +281,8 @@ function decodeGrid() {
             fillRatio,
             cellWidth,
             cellHeight,
-            detectionDetails
+            detectionDetails,
+            binaryString
           };
         }
       }
@@ -290,9 +293,9 @@ function decodeGrid() {
       debugText += `Cell size: ${bestResult.cellWidth.toFixed(1)}x${bestResult.cellHeight.toFixed(1)}px\n`;
       debugText += `Fill ratio: ${(bestResult.fillRatio * 100).toFixed(1)}%\n`;
       debugText += `Binary length: ${bestResult.bits.length}\n`;
-      debugText += `Binary: ${bestResult.bits.join("")}\n\n`;
+      debugText += `Binary: ${bestResult.binaryString.substring(0, 100)}${bestResult.binaryString.length > 100 ? '...' : ''}\n\n`;
       
-      if (bestResult.detectionDetails && bestResult.detectionDetails.length > 0) {
+      if (bestResult.detectionDetails && bestResult.detectionDetails.length > 0 && bestResult.gridSize <= 10) {
         debugText += "Cell detection details:\n";
         bestResult.detectionDetails.forEach(detail => {
           debugText += detail + "\n";
@@ -303,32 +306,36 @@ function decodeGrid() {
       showResult(bestResult.text, debugText);
     } else {
       console.log("No valid grid found");
-      debugText += "No valid grid pattern detected.\n";
-      debugText += "Tried grid sizes 3-40, none produced readable text.\n";
-      debugText += "This might mean the image format is different than expected.";
+      debugText += "No valid grid pattern detected.\n\n";
+      debugText += "Tested grids:\n";
+      debugText += testedGrids.slice(0, 20).join('\n') + '\n';
+      if (testedGrids.length > 20) {
+        debugText += `... and ${testedGrids.length - 20} more\n`;
+      }
+      debugText += "\nThe image might use a different encoding format.";
       showResult("[Could not decode]", debugText);
     }
     
   } catch (error) {
     console.error("Error in decodeGrid:", error);
-    showResult("[Decoding error]", "Error: " + error.message + "\nStack: " + error.stack);
+    showResult("[Decoding error]", "Error: " + error.message);
   }
 }
 
-function sampleAreaAdvanced(data, width, centerX, centerY, radius) {
-  let totalRed = 0, totalGreen = 0, totalBlue = 0;
-  let totalDarkness = 0;
-  let sampleCount = 0;
+function sampleCell(data, width, height, centerX, centerY, radius) {
+  let coloredPixels = 0;
+  let totalPixels = 0;
+  let avgR = 0, avgG = 0, avgB = 0;
   
-  // For very small cells, sample a minimum area
   const effectiveRadius = Math.max(radius, 2);
   const radiusSquared = effectiveRadius * effectiveRadius;
   
   const startX = Math.max(0, Math.floor(centerX - effectiveRadius));
   const endX = Math.min(width - 1, Math.floor(centerX + effectiveRadius));
   const startY = Math.max(0, Math.floor(centerY - effectiveRadius));
-  const endY = Math.min(Math.floor(data.length / (width * 4)) - 1, Math.floor(centerY + effectiveRadius));
+  const endY = Math.min(height - 1, Math.floor(centerY + effectiveRadius));
   
+  // Sample pixels in the cell area
   for (let y = startY; y <= endY; y++) {
     for (let x = startX; x <= endX; x++) {
       const dx = x - centerX;
@@ -336,70 +343,73 @@ function sampleAreaAdvanced(data, width, centerX, centerY, radius) {
       
       if (dx * dx + dy * dy <= radiusSquared) {
         const idx = (y * width + x) * 4;
-        if (idx + 2 < data.length) {
+        if (idx + 3 < data.length) {
           const r = data[idx];
           const g = data[idx + 1];
           const b = data[idx + 2];
           
-          totalRed += r;
-          totalGreen += g;
-          totalBlue += b;
+          avgR += r;
+          avgG += g;
+          avgB += b;
+          totalPixels++;
           
+          // Check if pixel is significantly different from white/light gray
           const brightness = (r + g + b) / 3;
-          totalDarkness += (255 - brightness) / 255;
-          sampleCount++;
+          const isNotWhite = brightness < 240;
+          
+          // Check for any color that's not close to white
+          const maxVal = Math.max(r, g, b);
+          const minVal = Math.min(r, g, b);
+          const hasSignificantColor = (maxVal - minVal) > 20 || brightness < 220;
+          
+          if (isNotWhite || hasSignificantColor) {
+            coloredPixels++;
+          }
         }
       }
     }
   }
   
-  if (sampleCount === 0) {
-    return { hasFilledCircle: false, darkness: 0, blueRatio: 0, colorRatio: 0 };
+  if (totalPixels === 0) {
+    return { isFilled: false, score: 0, debug: 'no pixels' };
   }
   
-  const avgRed = totalRed / sampleCount;
-  const avgGreen = totalGreen / sampleCount;
-  const avgBlue = totalBlue / sampleCount;
-  const darkness = totalDarkness / sampleCount;
+  avgR /= totalPixels;
+  avgG /= totalPixels;
+  avgB /= totalPixels;
   
-  // Check for colored circles (blue, purple, pink, etc.)
-  const isBlue = avgBlue > avgRed + 30 && avgBlue > avgGreen + 30 && avgBlue > 80;
-  const isPurple = avgBlue > 80 && avgRed > 80 && avgBlue > avgGreen + 20;
-  const isPink = avgRed > 80 && avgBlue > 80 && avgRed > avgGreen + 20;
-  const isColored = isBlue || isPurple || isPink;
-  const isDark = darkness > 0.3;
+  const avgBrightness = (avgR + avgG + avgB) / 3;
+  const colorRatio = coloredPixels / totalPixels;
   
-  // Calculate overall "color intensity" - how much it differs from gray
-  const gray = (avgRed + avgGreen + avgBlue) / 3;
-  const colorVariance = Math.abs(avgRed - gray) + Math.abs(avgGreen - gray) + Math.abs(avgBlue - gray);
-  const colorRatio = colorVariance / 255;
+  // More aggressive detection - if cell has any significant non-white content
+  const isFilled = colorRatio > 0.1 || avgBrightness < 230;
   
-  return {
-    hasFilledCircle: isColored || isDark || colorRatio > 0.3,
-    darkness: darkness,
-    blueRatio: avgBlue / 255,
-    colorRatio: colorRatio
-  };
+  const debug = `r:${avgR.toFixed(0)} g:${avgG.toFixed(0)} b:${avgB.toFixed(0)} bright:${avgBrightness.toFixed(0)} ratio:${colorRatio.toFixed(2)}`;
+  
+  return { isFilled, score: colorRatio, debug };
 }
 
 function binaryToText(binaryString) {
   let text = "";
   
+  // Process in 8-bit chunks
   for (let i = 0; i < binaryString.length; i += 8) {
     const byte = binaryString.substr(i, 8);
     if (byte.length === 8) {
       const charCode = parseInt(byte, 2);
-      if (charCode >= 32 && charCode <= 126) {
-        text += String.fromCharCode(charCode);
-      } else if (charCode === 10 || charCode === 13) {
+      
+      // Include printable ASCII characters (32-126), newlines (10), carriage returns (13)
+      if ((charCode >= 32 && charCode <= 126) || charCode === 10 || charCode === 13) {
         text += String.fromCharCode(charCode);
       } else if (charCode === 0) {
-        break; // null terminator
+        // Null terminator - stop here
+        break;
       }
+      // Skip other non-printable characters
     }
   }
   
-  return text;
+  return text.trim();
 }
 
 function showResult(text, debug) {
@@ -411,6 +421,13 @@ function showResult(text, debug) {
 
 closeBtn.addEventListener("click", () => {
   modal.style.display = "none";
+});
+
+// Close modal when clicking outside
+modal.addEventListener("click", (e) => {
+  if (e.target === modal) {
+    modal.style.display = "none";
+  }
 });
 </script>
 
