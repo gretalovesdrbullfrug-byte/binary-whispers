@@ -224,67 +224,97 @@ function decodeGrid() {
     const data = imageData.data;
     let debugText = `Image: ${canvas.width}x${canvas.height}px\n`;
     
-    // Try different grid sizes - expanded range for larger grids
+    // Try different grid sizes - start with smaller, more likely sizes first
     let testedGrids = [];
-    for (let gridSize = 3; gridSize <= 80; gridSize++) {
+    let candidates = [];
+    
+    for (let gridSize = 3; gridSize <= 50; gridSize++) {
       const cellWidth = canvas.width / gridSize;
       const cellHeight = canvas.height / gridSize;
       
       // Skip if cells are too small
-      if (cellWidth < 5 || cellHeight < 5) continue;
+      if (cellWidth < 8 || cellHeight < 8) continue;
       
       const bits = [];
       let filledCells = 0;
       let detectionDetails = [];
+      let confidenceSum = 0;
       
       for (let row = 0; row < gridSize; row++) {
         for (let col = 0; col < gridSize; col++) {
           const centerX = Math.floor(col * cellWidth + cellWidth / 2);
           const centerY = Math.floor(row * cellHeight + cellHeight / 2);
           
-          const sampleRadius = Math.min(cellWidth, cellHeight) * 0.3;
+          const sampleRadius = Math.min(cellWidth, cellHeight) * 0.35;
           const result = sampleCell(data, canvas.width, canvas.height, centerX, centerY, sampleRadius);
           const bit = result.isFilled ? "1" : "0";
           bits.push(bit);
           
-          if (bit === "1") filledCells++;
+          if (bit === "1") {
+            filledCells++;
+            confidenceSum += result.confidence;
+          }
           
           // Debug for smaller grids
-          if (gridSize <= 10) {
+          if (gridSize <= 15) {
             detectionDetails.push(`(${row},${col}): ${result.debug} -> ${bit}`);
           }
         }
       }
       
       const fillRatio = filledCells / (gridSize * gridSize);
-      testedGrids.push(`${gridSize}x${gridSize}: ${filledCells}/${gridSize*gridSize} (${(fillRatio*100).toFixed(1)}%)`);
+      const avgConfidence = filledCells > 0 ? confidenceSum / filledCells : 0;
+      testedGrids.push(`${gridSize}x${gridSize}: ${filledCells}/${gridSize*gridSize} (${(fillRatio*100).toFixed(1)}%) conf:${avgConfidence.toFixed(2)}`);
       
-      // Test if this produces valid text (reasonable fill ratio)
-      if (fillRatio > 0.02 && fillRatio < 0.98 && filledCells > 0) {
+      // Test if this produces valid text (reasonable fill ratio and confidence)
+      if (fillRatio > 0.03 && fillRatio < 0.97 && filledCells > 0 && avgConfidence > 0.2) {
         const binaryString = bits.join("");
         const text = binaryToText(binaryString);
         
-        // Score based on text quality
-        const alphaCount = (text.match(/[a-zA-Z]/g) || []).length;
-        const spaceCount = (text.match(/\s/g) || []).length;
-        const printableCount = (text.match(/[\x20-\x7E]/g) || []).length;
-        const score = printableCount * 2 + alphaCount * 3 + spaceCount;
-        
-        console.log(`Grid ${gridSize}x${gridSize}: fill=${(fillRatio*100).toFixed(1)}% (${filledCells}/${gridSize*gridSize}), text="${text.substring(0, 30)}...", score=${score}`);
-        
-        if (score > bestScore && text.length > 0) {
-          bestScore = score;
-          bestResult = {
-            gridSize,
-            bits,
-            text,
-            fillRatio,
-            cellWidth,
-            cellHeight,
-            detectionDetails,
-            binaryString
-          };
-        }
+        // Store as candidate for evaluation
+        candidates.push({
+          gridSize,
+          bits,
+          text,
+          fillRatio,
+          cellWidth,
+          cellHeight,
+          detectionDetails,
+          binaryString,
+          filledCells,
+          avgConfidence
+        });
+      }
+    }
+    
+    // Evaluate all candidates and pick the best one
+    for (const candidate of candidates) {
+      const { gridSize, text, fillRatio, filledCells, avgConfidence } = candidate;
+      
+      // Score based on text quality and grid consistency
+      const alphaCount = (text.match(/[a-zA-Z]/g) || []).length;
+      const spaceCount = (text.match(/\s/g) || []).length;
+      const printableCount = (text.match(/[\x20-\x7E]/g) || []).length;
+      
+      // Penalize grids that are too large for the expected message length
+      const expectedBits = Math.ceil(text.length * 8);
+      const actualBits = gridSize * gridSize;
+      const sizePenalty = actualBits > expectedBits * 4 ? 0.3 : 1;
+      
+      // Prefer smaller grids when quality is similar
+      const gridSizePenalty = gridSize > 15 ? Math.max(0.2, 1 - (gridSize - 15) * 0.03) : 1;
+      
+      // Confidence bonus
+      const confidenceBonus = 1 + avgConfidence;
+      
+      const baseScore = printableCount * 2 + alphaCount * 4 + spaceCount * 2;
+      const score = baseScore * sizePenalty * gridSizePenalty * confidenceBonus;
+      
+      console.log(`Grid ${gridSize}x${gridSize}: fill=${(fillRatio*100).toFixed(1)}% (${filledCells}/${gridSize*gridSize}), text="${text.substring(0, 30)}...", baseScore=${baseScore}, score=${score.toFixed(1)}`);
+      
+      if (score > bestScore && text.length > 0) {
+        bestScore = score;
+        bestResult = candidate;
       }
     }
     
@@ -327,7 +357,8 @@ function sampleCell(data, width, height, centerX, centerY, radius) {
   let totalPixels = 0;
   let avgR = 0, avgG = 0, avgB = 0;
   
-  const effectiveRadius = Math.max(radius, 2);
+  // For larger grids with smaller cells, we need a more robust sampling strategy
+  const effectiveRadius = Math.max(radius, 3);
   const radiusSquared = effectiveRadius * effectiveRadius;
   
   const startX = Math.max(0, Math.floor(centerX - effectiveRadius));
@@ -353,16 +384,23 @@ function sampleCell(data, width, height, centerX, centerY, radius) {
           avgB += b;
           totalPixels++;
           
-          // Check if pixel is significantly different from white/light gray
+          // More sophisticated color detection
           const brightness = (r + g + b) / 3;
-          const isNotWhite = brightness < 240;
           
-          // Check for any color that's not close to white
-          const maxVal = Math.max(r, g, b);
-          const minVal = Math.min(r, g, b);
-          const hasSignificantColor = (maxVal - minVal) > 20 || brightness < 220;
+          // Check for specific colors (blue, purple, pink)
+          const isBlue = b > r + 40 && b > g + 40 && b > 120;
+          const isPurple = (r > 150 && b > 150) && (r + b) > g * 1.8;
+          const isPink = (r > 180 && b > 100) && r > g + 30;
+          const isSpecificColor = isBlue || isPurple || isPink;
           
-          if (isNotWhite || hasSignificantColor) {
+          // Check for dark pixels
+          const isDark = brightness < 180;
+          
+          // Check for any significant deviation from white
+          const deviation = Math.abs(r - 255) + Math.abs(g - 255) + Math.abs(b - 255);
+          const hasDeviation = deviation > 100;
+          
+          if (isSpecificColor || isDark || hasDeviation) {
             coloredPixels++;
           }
         }
@@ -371,7 +409,7 @@ function sampleCell(data, width, height, centerX, centerY, radius) {
   }
   
   if (totalPixels === 0) {
-    return { isFilled: false, score: 0, debug: 'no pixels' };
+    return { isFilled: false, score: 0, confidence: 0, debug: 'no pixels' };
   }
   
   avgR /= totalPixels;
@@ -381,12 +419,18 @@ function sampleCell(data, width, height, centerX, centerY, radius) {
   const avgBrightness = (avgR + avgG + avgB) / 3;
   const colorRatio = coloredPixels / totalPixels;
   
-  // More aggressive detection - if cell has any significant non-white content
-  const isFilled = colorRatio > 0.1 || avgBrightness < 230;
+  // Calculate confidence based on how strong the signal is
+  const colorStrength = Math.abs(avgR - 255) + Math.abs(avgG - 255) + Math.abs(avgB - 255);
+  const confidence = Math.min(1, (colorRatio * 2 + colorStrength / 300) / 2);
   
-  const debug = `r:${avgR.toFixed(0)} g:${avgG.toFixed(0)} b:${avgB.toFixed(0)} bright:${avgBrightness.toFixed(0)} ratio:${colorRatio.toFixed(2)}`;
+  // A cell is filled if it has strong evidence of color/darkness
+  // Higher threshold for larger grids to reduce false positives
+  const threshold = radius < 8 ? 0.15 : 0.25;
+  const isFilled = colorRatio > threshold && confidence > 0.3;
   
-  return { isFilled, score: colorRatio, debug };
+  const debug = `r:${avgR.toFixed(0)} g:${avgG.toFixed(0)} b:${avgB.toFixed(0)} ratio:${colorRatio.toFixed(2)} conf:${confidence.toFixed(2)}`;
+  
+  return { isFilled, score: colorRatio, confidence, debug };
 }
 
 function binaryToText(binaryString) {
