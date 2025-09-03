@@ -1,368 +1,293 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Binary Whisper Decoder</title>
-<style>
-  body {
-    margin: 0;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    background: white;
-    background-image: 
-      linear-gradient(to right, #050505 1px, transparent 1px),
-      linear-gradient(to bottom, #050505 1px, transparent 1px);
-    background-size: 40px 40px;
-    font-family: monospace;
-  }
-  
-  #dropzone {
-    background: #050505;
-    color: white;
-    padding: 1.2em 3em;
-    border-radius: 2em;
-    font-size: 1.2em;
-    cursor: pointer;
-    transition: background 0.3s;
-    text-align: center;
-  }
-  
-  #dropzone:hover { background: #222; }
-  #canvas { display: none; }
-  
-  #modal {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    background: rgba(0,0,0,0.7);
-    display: none;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-  }
-  
-  #modalContent {
-    background: #fff;
-    color: #050505;
-    padding: 2em;
-    border-radius: 1em;
-    max-width: 80vw;
-    max-height: 80vh;
-    overflow-y: auto;
-    font-family: monospace;
-    white-space: pre-wrap;
-  }
-  
-  #closeBtn {
-    margin-top: 1em;
-    padding: 0.5em 1.5em;
-    border: none;
-    border-radius: 0.5em;
-    background: #050505;
-    color: white;
-    font-family: monospace;
-    cursor: pointer;
-  }
-  
-  .result-section {
-    margin-bottom: 1.5em;
-    padding: 1em;
-    border: 1px solid #ddd;
-    border-radius: 0.5em;
-  }
-  
-  .debug-info {
-    font-size: 12px;
-    color: #666;
-    background: #f8f8f8;
-    padding: 1em;
-    border-radius: 0.5em;
-  }
+  <meta charset="UTF-8" />
+  <title>Binary Whisper Decoder — CellNumber (UI clássico)</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --grid: #050505;
+      --accent: #0066cc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background: var(--bg);
+      background-image:
+        linear-gradient(to right, var(--grid) 1px, transparent 1px),
+        linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
+      background-size: 40px 40px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    #header { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+    #title { font-weight: 700; padding: 6px 10px; border-radius: 10px; background: rgba(0,0,0,0.06); }
+    #controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .pill { padding: 6px 10px; border-radius: 999px; border: 1px solid #ddd; background: #fff; display: inline-flex; align-items: center; gap: 6px; }
+    .pill input[type="number"] { width: 72px; }
+    .pill input[type="range"] { width: 160px; }
+    .btn { cursor: pointer; user-select: none; }
 
-  .decoded-message {
-    font-size: 16px;
-    font-weight: bold;
-    color: #0066cc;
-    background: #f0f8ff;
-    padding: 1em;
-    border-radius: 0.5em;
-    border: 2px solid #0066cc;
-  }
-</style>
+    #dropzone {
+      background: #050505; color: white; padding: 1.2em 3em; border-radius: 2em; font-size: 1.2em; cursor: pointer;
+      transition: background 0.25s; text-align: center; box-shadow: 0 10px 24px rgba(0,0,0,0.15);
+    }
+    #dropzone:hover { background: #222; }
+    #canvas { display: none; }
+
+    #modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: none; justify-content: center; align-items: center; z-index: 1000; }
+    #modalContent { background: #fff; color: #050505; padding: 1.25em 1.25em 1em; border-radius: 14px; max-width: 90vw; max-height: 85vh; overflow-y: auto; font-family: inherit; }
+    .result-section { margin-bottom: 1em; padding: 1em; border: 1px solid #e6e6e6; border-radius: 10px; }
+    .decoded-message { font-size: 16px; font-weight: 700; color: var(--accent); background: #f0f8ff; padding: 1em; border-radius: 10px; border: 2px solid var(--accent); white-space: pre-wrap; }
+    .debug-info { font-size: 12px; color: #444; background: #fafafa; padding: 1em; border-radius: 10px; white-space: pre-wrap; }
+    #closeBtn { margin-top: 0.5em; padding: 0.6em 1.2em; border: none; border-radius: 10px; background: #050505; color: white; cursor: pointer; }
+  </style>
 </head>
 <body>
 
-<div id="dropzone">drop your whisper here</div>
-<canvas id="canvas"></canvas>
-
-<div id="modal">
-  <div id="modalContent">
-    <div class="result-section">
-      <h3>Decoded Message:</h3>
-      <div id="decodedText" class="decoded-message"></div>
+  <div id="header">
+    <div id="title">Binary Whisper Decoder — <strong>CellNumber</strong></div>
+    <div id="controls">
+      <label class="pill">Cells/linha: <input id="cellNumber" type="number" min="2" max="200" value="20"></label>
+      <label class="pill">Inner ratio: <input id="innerRatio" type="range" min="0.5" max="0.95" step="0.01" value="0.80"><span id="innerRatioVal">0.80</span></label>
+      <label class="pill">Threshold bias: <input id="thrBias" type="range" min="-60" max="60" step="1" value="0"><span id="thrBiasVal">0</span></label>
+      <label class="pill">Ordem: 
+        <select id="order">
+          <option value="row">Row-major</option>
+          <option value="col">Col-major</option>
+          <option value="auto" selected>Auto</option>
+        </select>
+      </label>
+      <label class="pill">Offset bits: <input id="bitOffset" type="number" min="0" max="7" value="0"></label>
+      <button id="decode" class="pill btn" title="Decodificar">Decode</button>
+      <button id="rerun" class="pill btn" title="Rerun on last image">Rerun</button>
     </div>
-    <div class="result-section debug-info">
-      <h4>Debug Info:</h4>
-      <div id="debugInfo"></div>
-    </div>
-    <button id="closeBtn">close</button>
   </div>
-</div>
 
-<script>
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const dropzone = document.getElementById("dropzone");
-const modal = document.getElementById("modal");
-const decodedTextDiv = document.getElementById("decodedText");
-const debugInfo = document.getElementById("debugInfo");
-const closeBtn = document.getElementById("closeBtn");
+  <div id="dropzone">drop your whisper here</div>
+  <canvas id="canvas"></canvas>
 
-let bestScore = 0;
-let bestResult = null;
+  <div id="modal">
+    <div id="modalContent">
+      <div class="result-section">
+        <h3>Decoded Message:</h3>
+        <div id="decodedText" class="decoded-message"></div>
+      </div>
+      <div class="result-section debug-info">
+        <h4>Debug Info:</h4>
+        <div id="debugInfo"></div>
+      </div>
+      <button id="closeBtn">close</button>
+    </div>
+  </div>
 
-// Prevent browser default drag behavior
-["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
-  document.addEventListener(eventName, e => e.preventDefault(), false);
-});
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const dropzone = document.getElementById("dropzone");
+    const modal = document.getElementById("modal");
+    const decodedTextDiv = document.getElementById("decodedText");
+    const debugInfo = document.getElementById("debugInfo");
+    const closeBtn = document.getElementById("closeBtn");
 
-// Dropzone events
-dropzone.addEventListener("dragover", e => {
-  e.preventDefault();
-  e.stopPropagation();
-  dropzone.style.background = "#333";
-});
+    const cellNumberInput = document.getElementById('cellNumber');
+    const innerRatioInput = document.getElementById('innerRatio');
+    const innerRatioVal = document.getElementById('innerRatioVal');
+    const thrBiasInput = document.getElementById('thrBias');
+    const thrBiasVal = document.getElementById('thrBiasVal');
+    const orderSelect = document.getElementById('order');
+    const bitOffsetInput = document.getElementById('bitOffset');
+    const decodeBtn = document.getElementById('decode');
+    const rerunBtn = document.getElementById('rerun');
 
-dropzone.addEventListener("dragleave", e => {
-  e.preventDefault();
-  e.stopPropagation();
-  dropzone.style.background = "#050505";
-});
+    let lastImageDataURL = null;
 
-dropzone.addEventListener("drop", e => {
-  e.preventDefault();
-  e.stopPropagation();
-  dropzone.style.background = "#050505";
-  handleFile(e.dataTransfer.files[0]);
-});
+    innerRatioInput.addEventListener('input', () => innerRatioVal.textContent = Number(innerRatioInput.value).toFixed(2));
+    thrBiasInput.addEventListener('input', () => thrBiasVal.textContent = String(thrBiasInput.value));
 
-dropzone.addEventListener("click", () => {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/*";
-  input.onchange = e => {
-    handleFile(e.target.files[0]);
-  };
-  input.click();
-});
+    ["dragenter","dragover","dragleave","drop"].forEach(name => {
+      document.addEventListener(name, e => e.preventDefault(), false);
+    });
 
-function handleFile(file) {
-  if (!file) {
-    showResult("[No file]", "No file was provided");
-    return;
-  }
-  if (!file.type.startsWith('image/')) {
-    showResult("[Not an image]", `File type: ${file.type}\nPlease upload an image file.`);
-    return;
-  }
+    dropzone.addEventListener("dragover", e => { e.preventDefault(); e.stopPropagation(); dropzone.style.background = "#333"; });
+    dropzone.addEventListener("dragleave", e => { e.preventDefault(); e.stopPropagation(); dropzone.style.background = "#050505"; });
+    dropzone.addEventListener("drop", e => {
+      e.preventDefault(); e.stopPropagation(); dropzone.style.background = "#050505"; handleFile(e.dataTransfer.files[0]);
+    });
+    dropzone.addEventListener("click", () => {
+      const input = document.createElement("input"); input.type = "file"; input.accept = "image/*";
+      input.onchange = e => handleFile(e.target.files[0]); input.click();
+    });
 
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    const img = new Image();
-    img.onload = function() {
+    rerunBtn.addEventListener('click', () => {
+      if (!lastImageDataURL) return;
+      const img = new Image();
+      img.onload = function() { canvas.width = this.width; canvas.height = this.height; ctx.drawImage(this, 0, 0); setTimeout(decodeGrid, 50); };
+      img.src = lastImageDataURL;
+    });
+    decodeBtn.addEventListener('click', () => { if (lastImageDataURL) decodeGrid(); });
+
+    function handleFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        const img = new Image();
+        img.onload = () => {
+          canvas.width = img.width; canvas.height = img.height; ctx.drawImage(img, 0, 0);
+          lastImageDataURL = e.target.result; decodeGrid();
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function decodeGrid() {
       try {
-        canvas.width = this.width;
-        canvas.height = this.height;
-        ctx.drawImage(this, 0, 0);
-        setTimeout(() => {
-          decodeGrid();
-        }, 100);
-      } catch (error) {
-        showResult("[Canvas error]", "Error: " + error.message);
-      }
-    };
-    img.onerror = function() {
-      showResult("[Image load failed]", "Image could not be loaded");
-    };
-    img.src = e.target.result;
-  };
-  reader.onerror = function(error) {
-    showResult("[File read error]", "Could not read file: " + error);
-  };
-  reader.readAsDataURL(file);
-}
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const { data, width, height } = imageData;
 
-function decodeGrid() {
-  console.log("=== DECODE GRID START ===");
-  bestScore = 0;
-  bestResult = null;
+        const n = parseInt(cellNumberInput.value);
+        const innerRatio = parseFloat(innerRatioInput.value);
+        const bitOffsetUI = parseInt(bitOffsetInput.value) || 0;
+        const orderUI = orderSelect.value;
 
-  try {
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imageData.data;
-    let debugText = `Image: ${canvas.width}x${canvas.height}px\n`;
+        const stats = globalBrightnessStats(data, width, height);
+        const baseThr = stats.mean + Number(thrBiasInput.value);
+        const darkThr = clamp(baseThr, 60, 230);
+        const lightThr = clamp(baseThr, 60, 230);
 
-    let testedGrids = [];
-    let candidates = [];
+        const imgSize = Math.min(width, height);
+        const cellSize = imgSize / n;
 
-    for (let gridSize = 3; gridSize <= 50; gridSize++) {
-      const cellWidth = canvas.width / gridSize;
-      const cellHeight = canvas.height / gridSize;
-      if (cellWidth < 8 || cellHeight < 8) continue;
+        const modes = ['dark','light'];
+        const orders = orderUI === 'auto' ? ['row','col'] : [orderUI];
 
-      const bits = [];
-      let filledCells = 0;
-      let detectionDetails = [];
-      let confidenceSum = 0;
+        let best = null;
 
-      for (let row = 0; row < gridSize; row++) {
-        for (let col = 0; col < gridSize; col++) {
-          const centerX = Math.floor(col * cellWidth + cellWidth / 2);
-          const centerY = Math.floor(row * cellHeight + cellHeight / 2);
-          const sampleRadius = Math.min(cellWidth, cellHeight) * 0.35;
-          const result = sampleCell(data, canvas.width, canvas.height, centerX, centerY, sampleRadius);
-          const bit = result.isFilled ? "1" : "0";
-          bits.push(bit);
-          if (bit === "1") {
-            filledCells++;
-            confidenceSum += result.confidence;
+        for (const mode of modes) {
+          const bitsRow = [];
+          const bitsCol = [];
+
+          for (let r = 0; r < n; r++) {
+            for (let c = 0; c < n; c++) {
+              const filled = sampleCellBySquare(data, width, height, r, c, cellSize, innerRatio, darkThr, lightThr, mode);
+              const bit = filled ? '1' : '0';
+              bitsRow.push(bit);
+              bitsCol[c * n + r] = bit;
+            }
           }
-          if (gridSize <= 15) {
-            detectionDetails.push(`(${row},${col}): ${result.debug} -> ${bit}`);
+
+          const bitstreams = [];
+          if (orders.includes('row')) bitstreams.push({ order: 'row', bits: bitsRow.join('') });
+          if (orders.includes('col')) bitstreams.push({ order: 'col', bits: bitsCol.join('') });
+
+          for (const { order, bits } of bitstreams) {
+            for (let offset = 0; offset < 8; offset++) {
+              if (orderUI !== 'auto' && offset !== bitOffsetUI) continue;
+              const { text, score, printableRatio, stoppedAtNull } = bitsToAscii(bits, offset);
+              const fillRatio = (bits.match(/1/g) || []).length / bits.length;
+              const candidate = { text, score, printableRatio, stoppedAtNull, mode, order, offset, fillRatio };
+              if (!best || candidate.score > best.score) best = candidate;
+            }
           }
         }
-      }
 
-      const fillRatio = filledCells / (gridSize * gridSize);
-      const avgConfidence = filledCells > 0 ? confidenceSum / filledCells : 0;
-      testedGrids.push(`${gridSize}x${gridSize}: ${filledCells}/${gridSize*gridSize} (${(fillRatio*100).toFixed(1)}%) conf:${avgConfidence.toFixed(2)}`);
+        let debug = `Image: ${width}x${height}\n` +
+                    `Cells/linha: ${n}\nCell size: ${cellSize.toFixed(2)} px\n` +
+                    `Inner ratio: ${innerRatio.toFixed(2)}\n` +
+                    `Global mean: ${stats.mean.toFixed(1)}  std: ${stats.std.toFixed(1)}  median: ${stats.median.toFixed(1)}\n` +
+                    `Threshold base: ${baseThr.toFixed(1)} (bias ${thrBiasInput.value})\n`;
 
-      if (fillRatio > 0.03 && fillRatio < 0.97 && filledCells > 0 && avgConfidence > 0.2) {
-        const binaryString = bits.join("");
-        const text = binaryToText(binaryString);
-        candidates.push({ gridSize, bits, text, fillRatio, cellWidth, cellHeight, detectionDetails, binaryString, filledCells, avgConfidence });
-      }
-    }
-
-    for (const candidate of candidates) {
-      const { gridSize, text, fillRatio, filledCells, avgConfidence } = candidate;
-      const alphaCount = (text.match(/[a-zA-Z]/g) || []).length;
-      const spaceCount = (text.match(/\s/g) || []).length;
-      const printableCount = (text.match(/[\x20-\x7E]/g) || []).length;
-
-      const expectedBits = Math.ceil(text.length * 8);
-      const actualBits = gridSize * gridSize;
-      const sizePenalty = actualBits > expectedBits * 4 ? 0.3 : 1;
-      const gridSizePenalty = gridSize > 15 ? Math.max(0.2, 1 - (gridSize - 15) * 0.03) : 1;
-      const confidenceBonus = 1 + avgConfidence;
-      const baseScore = printableCount * 2 + alphaCount * 4 + spaceCount * 2;
-      const score = baseScore * sizePenalty * gridSizePenalty * confidenceBonus;
-
-      if (score > bestScore && text.length > 0) {
-        bestScore = score;
-        bestResult = candidate;
+        if (best && best.text) {
+          debug += `\nChosen -> mode: ${best.mode} | order: ${best.order} | bit offset: ${best.offset}\n` +
+                   `Fill ratio: ${(best.fillRatio*100).toFixed(1)}% | Printable: ${(best.printableRatio*100).toFixed(1)}% | Score: ${best.score}\n` +
+                   (best.stoppedAtNull ? `Stopped at NULL (0x00)\n` : '') +
+                   `Tip: adjust Threshold bias or Offset if the text looks wrong.`;
+          showResult(best.text, debug);
+        } else {
+          debug += `\nNo valid result. Try different Cells/linha, Inner ratio, Threshold bias.`;
+          showResult('[Could not decode]', debug);
+        }
+      } catch (err) {
+        showResult('[Decoding error]', String(err?.message || err));
       }
     }
 
-    if (bestResult) {
-      debugText += `Best grid: ${bestResult.gridSize}x${bestResult.gridSize}\n`;
-      debugText += `Cell size: ${bestResult.cellWidth.toFixed(1)}x${bestResult.cellHeight.toFixed(1)}px\n`;
-      debugText += `Fill ratio: ${(bestResult.fillRatio * 100).toFixed(1)}%\n`;
-      debugText += `Binary length: ${bestResult.bits.length}\n`;
-      debugText += `Binary: ${bestResult.binaryString.substring(0, 100)}${bestResult.binaryString.length > 100 ? '...' : ''}\n\n`;
-      if (bestResult.detectionDetails && bestResult.detectionDetails.length > 0 && bestResult.gridSize <= 10) {
-        debugText += "Cell detection details:\n";
-        bestResult.detectionDetails.forEach(detail => { debugText += detail + "\n"; });
-      }
-      showResult(bestResult.text, debugText);
-    } else {
-      debugText += "No valid grid pattern detected.\n\n";
-      debugText += "Tested grids:\n";
-      debugText += testedGrids.slice(0, 20).join('\n') + '\n';
-      if (testedGrids.length > 20) debugText += `... and ${testedGrids.length - 20} more\n`;
-      debugText += "\nThe image might use a different encoding format.";
-      showResult("[Could not decode]", debugText);
-    }
-  } catch (error) {
-    console.error("Error in decodeGrid:", error);
-    showResult("[Decoding error]", "Error: " + error.message);
-  }
-}
-
-function sampleCell(data, width, height, centerX, centerY, radius) {
-  let totalPixels = 0;
-  let avgR = 0, avgG = 0, avgB = 0;
-
-  const effectiveRadius = Math.max(radius, 3);
-  const radiusSquared = effectiveRadius * effectiveRadius;
-
-  const startX = Math.max(0, Math.floor(centerX - effectiveRadius));
-  const endX = Math.min(width - 1, Math.floor(centerX + effectiveRadius));
-  const startY = Math.max(0, Math.floor(centerY - effectiveRadius));
-  const endY = Math.min(height - 1, Math.floor(centerY + effectiveRadius));
-
-  for (let y = startY; y <= endY; y++) {
-    for (let x = startX; x <= endX; x++) {
-      const dx = x - centerX;
-      const dy = y - centerY;
-      if (dx * dx + dy * dy <= radiusSquared) {
-        const idx = (y * width + x) * 4;
-        if (idx + 3 < data.length) {
-          const r = data[idx];
-          const g = data[idx + 1];
-          const b = data[idx + 2];
-          avgR += r; avgG += g; avgB += b;
-          totalPixels++;
+    function globalBrightnessStats(data, w, h) {
+      let sum = 0, sum2 = 0; const vals = [];
+      const step = Math.max(3, Math.floor(Math.min(w, h) / 200));
+      for (let y = 0; y < h; y += step) {
+        let base = (y * w) * 4;
+        for (let x = 0; x < w; x += step) {
+          const i = base + x * 4; const r = data[i], g = data[i+1], b = data[i+2];
+          const v = (r + g + b) / 3; sum += v; sum2 += v*v; vals.push(v);
         }
       }
+      const n = vals.length; const mean = sum / n; const std = Math.sqrt(Math.max(0, sum2/n - mean*mean));
+      vals.sort((a,b)=>a-b); const median = vals[Math.floor(n/2)] || mean;
+      return { mean, std, median };
     }
-  }
 
-  if (totalPixels === 0) return { isFilled: false, confidence: 0, debug: 'no pixels' };
+    function sampleCellBySquare(data, w, h, row, col, cellSize, innerRatio, darkThr, lightThr, mode) {
+      const px0 = Math.floor(col * cellSize);
+      const py0 = Math.floor(row * cellSize);
+      const inner = cellSize * innerRatio;
+      const margin = (cellSize - inner) / 2;
+      const sx = Math.max(0, Math.floor(px0 + margin));
+      const sy = Math.max(0, Math.floor(py0 + margin));
+      const ex = Math.min(w - 1, Math.floor(px0 + cellSize - margin));
+      const ey = Math.min(h - 1, Math.floor(py0 + cellSize - margin));
 
-  avgR /= totalPixels; avgG /= totalPixels; avgB /= totalPixels;
-  const avgBrightness = (avgR + avgG + avgB) / 3;
-
-  // Brightness threshold: darker cells = filled
-  const isFilled = avgBrightness < 200;
-  const confidence = Math.min(1, (255 - avgBrightness) / 255);
-
-  const debug = `r:${avgR.toFixed(0)} g:${avgG.toFixed(0)} b:${avgB.toFixed(0)} bright:${avgBrightness.toFixed(1)} conf:${confidence.toFixed(2)}`;
-
-  return { isFilled, confidence, debug };
-}
-
-function binaryToText(binaryString) {
-  let text = "";
-  for (let i = 0; i < binaryString.length; i += 8) {
-    const byte = binaryString.substr(i, 8);
-    if (byte.length === 8) {
-      const charCode = parseInt(byte, 2);
-      if ((charCode >= 32 && charCode <= 126) || charCode === 10 || charCode === 13) {
-        text += String.fromCharCode(charCode);
-      } else if (charCode === 0) break;
+      const stride = Math.max(1, Math.floor(inner / 8));
+      let darkVotes = 0, lightVotes = 0, total = 0;
+      for (let y = sy; y <= ey; y += stride) {
+        for (let x = sx; x <= ex; x += stride) {
+          const idx = (y * w + x) * 4;
+          const r = data[idx], g = data[idx+1], b = data[idx+2];
+          const br = (r + g + b) / 3; total++;
+          if (br < darkThr) darkVotes++;
+          if (br > lightThr) lightVotes++;
+        }
+      }
+      if (mode === 'dark') return darkVotes >= total/2;
+      return lightVotes >= total/2;
     }
-  }
-  return text.trim();
-}
 
-function showResult(text, debug) {
-  decodedTextDiv.textContent = text;
-  debugInfo.textContent = debug;
-  modal.style.display = "flex";
-}
+    function bitsToAscii(bits, offset) {
+      let text = ""; let printable = 0; let total = 0; let stoppedAtNull = false;
+      const L = bits.length - (bits.length % 8);
+      for (let i = offset; i + 8 <= L; i += 8) {
+        const byte = bits.slice(i, i + 8);
+        const code = parseInt(byte, 2);
+        total++;
+        if (code === 0) { stoppedAtNull = true; break; }
+        if ((code >= 32 && code <= 126) || code === 9 || code === 10 || code === 13) {
+          text += String.fromCharCode(code); printable++;
+        } else {
+          text += "·";
+        }
+      }
+      const printableRatio = total ? printable / total : 0;
+      const spaceCount = (text.match(/\\s/g) || []).length;
+      const alphaCount = (text.match(/[A-Za-z]/g) || []).length;
+      const score = printable * 4 + spaceCount * 2 + alphaCount * 1.5 + (text.length >= 8 ? 5 : 0);
+      return { text: text.trim(), score, printableRatio, length: total, stoppedAtNull };
+    }
 
-closeBtn.addEventListener("click", () => {
-  modal.style.display = "none";
-});
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-modal.addEventListener("click", (e) => {
-  if (e.target === modal) modal.style.display = "none";
-});
-</script>
+    function showResult(text, debug) {
+      decodedTextDiv.textContent = text;
+      debugInfo.textContent = debug;
+      modal.style.display = "flex";
+    }
 
+    closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
+    modal.addEventListener("click", e => { if (e.target === modal) modal.style.display = "none"; });
+  </script>
 </body>
 </html>
