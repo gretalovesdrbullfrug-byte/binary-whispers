@@ -13,7 +13,7 @@ A small web app to decode binary messages hidden in square grid images (e.g. 100
   - Non-ASCII bytes shown as `·` placeholders so you can see where decoding failed.
 
 ## Usage
-1. Open [`decoder.html`](decoder.html) in your browser.
+1. Open [`index.html`](index.html) in your browser.
 2. Drag & drop a square grid image (e.g. 1000×1000 px) into the drop zone.
 3. Adjust parameters in the top control bar if the message is not clear.
 4. The decoded message and debug info will appear in a modal popup.
@@ -27,7 +27,7 @@ A small web app to decode binary messages hidden in square grid images (e.g. 100
 
 ## Hosting
 You can host this page easily:
-- **Local**: just double-click `decoder.html` to open in your browser.
+- **Local**: just double-click `index.html` to open in your browser.
 - **GitHub Pages**: push this repo to GitHub and enable Pages in repo settings.
 
 ## License
