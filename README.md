@@ -1,6 +1,8 @@
 # Binary Whisper Decoder
 
 A small web app to decode binary messages hidden in square grid images (e.g. 1000×1000 px black/white “whispers”).
+[Working version](https://gretalovesdrbullfrug-byte.github.io/binary-whispers/)
+
 
 ## Features
 - Drag & drop or click to upload an image.
