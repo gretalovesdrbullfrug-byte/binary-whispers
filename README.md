@@ -20,6 +20,8 @@ A small web app to decode binary messages hidden in square grid images (e.g. 100
 2. Drag & drop a square grid image (e.g. 1000×1000 px) into the drop zone.
 3. Adjust parameters in the top control bar if the message is not clear.
 4. The decoded message and debug info will appear in a modal popup.
+5. If you want to create your own binary files please read [text_to_binary.md](text_to_binary.md) and download the required code at [text_to_binary.pde](text_to_binary.pde)
+
 
 ## Controls
 - **Cells/line** → number of grid cells horizontally (image is assumed square).
